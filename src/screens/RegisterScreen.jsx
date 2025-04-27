@@ -5,6 +5,7 @@ import { auth } from '../services/firebase';
 import { useNavigation } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import Toast from 'react-native-toast-message';
 
 export default function RegisterScreen() {
   const navigation = useNavigation();
@@ -12,23 +13,43 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState('');
 
   const handleRegister = async () => {
+    console.log('Register button clicked');
     if (!email || !password) {
-      Alert.alert('Missing Fields', 'Please enter both email and password.');
+      Toast.show({
+        type: 'error',
+        text1: 'Missing Fields',
+        text2: 'Please enter both email and password.',
+      });
+      console.log('Missing fields');
       return;
     }
-  
+
     if (password.length < 6) {
-      Alert.alert('Weak Password', 'Password must be at least 6 characters long.');
+      Toast.show({
+        type: 'error',
+        text1: 'Weak Password',
+        text2: 'Password must be at least 6 characters long.',
+      });
+      console.log('Weak password');
       return;
     }
-  
+
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      Alert.alert('Success', 'Registered successfully! Please login.');
-      navigation.replace('Login'); // Go to login screen
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      console.log('User registered:', userCredential.user);
+      Toast.show({
+        type: 'success',
+        text1: 'Success',
+        text2: 'Registered successfully! Please login.',
+      });
+      navigation.replace('Login'); // Navigate to login screen
     } catch (error) {
-      Alert.alert('Registration Error', error.message);
       console.error('Firebase Error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Registration Error',
+        text2: error.message,
+      });
     }
   };
   

@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Alert, Pressable } from 'react-native';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
-import { auth } from '../services/firebase';
+import { auth, firestore  } from '../services/firebase';
+import { getDoc, doc} from 'firebase/firestore';
+
 import useGoogleAuth from '../hooks/useGoogleAuth';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -12,7 +14,7 @@ export default function LoginScreen() {
   const navigation = useNavigation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { promptAsync } = useGoogleAuth(); 
+  const promptAsync = useGoogleAuth();
 
 
   const handleLogin = async () => {
@@ -31,10 +33,22 @@ export default function LoginScreen() {
     }
   };
 
+
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) navigation.replace('MainApp'); // redirect to Home
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        const userDocRef = doc(firestore, 'users', user.uid); 
+        const userDocSnap = await getDoc(userDocRef); 
+    
+        if (!userDocSnap.exists()) {
+          navigation.replace('CompleteProfile');
+        } else {
+          navigation.replace('MainApp'); 
+        }
+      }
     });
+  
     return unsubscribe;
   }, []);
 

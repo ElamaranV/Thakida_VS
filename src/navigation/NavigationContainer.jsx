@@ -1,66 +1,50 @@
 import React, { useEffect, useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../services/firebase';
-
-// Screens
+import { auth, firestore } from '../services/firebase';
+import { doc, getDoc } from 'firebase/firestore';
 import LoginScreen from '../screens/LoginScreen';
 import RegisterScreen from '../screens/RegisterScreen';
-import HomeScreen from '../screens/HomeScreen';
-import AddVideoScreen from '../screens/AddVideoScreen';
-import SearchScreen from '../screens/SearchScreen';
-import ProfileScreen from '../screens/ProfileScreen';
-
-import { Ionicons } from '@expo/vector-icons';
+import CompleteProfileScreen from '../screens/CompleteProfileScreen';
+import MainApp from './MainApp';
+import Toast from 'react-native-toast-message';
 
 const Stack = createNativeStackNavigator();
-const Tab = createBottomTabNavigator();
-
-// const [user, setUser] = useState(true); <- to skip auth temporarily
-
-
-function MainTabs() {
-  return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        tabBarShowLabel: false,
-        tabBarStyle: { backgroundColor: '#111', borderTopColor: '#222' },
-        tabBarIcon: ({ focused, color, size }) => {
-          let iconName;
-
-          if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
-          else if (route.name === 'Add') iconName = focused ? 'add-circle' : 'add-circle-outline';
-          else if (route.name === 'Search') iconName = focused ? 'search' : 'search-outline';
-          else if (route.name === 'Profile') iconName = focused ? 'person' : 'person-outline';
-
-          return <Ionicons name={iconName} size={24} color={focused ? '#ff416c' : '#ccc'} />;
-        },
-      })}
-    >
-      <Tab.Screen name="Home" component={HomeScreen} />
-      <Tab.Screen name="Add" component={AddVideoScreen} />
-      <Tab.Screen name="Search" component={SearchScreen} />
-      <Tab.Screen name="Profile" component={ProfileScreen} />
-    </Tab.Navigator>
-  );
-}
 
 export default function Navigation() {
   const [user, setUser] = useState(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [profileComplete, setProfileComplete] = useState(false);
 
-  //Comment this out to skip auth temporarily (if needed)
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setUser(user);
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        const userDocRef = doc(firestore, 'users', currentUser.uid);
+        const userDocSnap = await getDoc(userDocRef);
+
+        if (userDocSnap.exists()) {
+          const userData = userDocSnap.data();
+          if (userData.username && userData.phoneNumber) {
+            setProfileComplete(true); // Profile is complete
+          } else {
+            setProfileComplete(false); // Profile is incomplete
+          }
+        } else {
+          setProfileComplete(false); // No user document found
+        }
+        setUser(currentUser);
+      } else {
+        setUser(null);
+        setProfileComplete(false);
+      }
       setCheckingAuth(false);
     });
+
     return unsubscribe;
   }, []);
 
-  if (checkingAuth) return null; 
+  if (checkingAuth) return null; // Show a loading screen or spinner while checking auth
 
   return (
     <NavigationContainer>
@@ -70,8 +54,10 @@ export default function Navigation() {
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Register" component={RegisterScreen} />
           </>
+        ) : !profileComplete ? (
+          <Stack.Screen name="CompleteProfile" component={CompleteProfileScreen} />
         ) : (
-          <Stack.Screen name="MainApp" component={MainTabs} />
+          <Stack.Screen name="MainApp" component={MainApp} />
         )}
       </Stack.Navigator>
     </NavigationContainer>
