@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Image } from 'react-native';
 import { 
   View, 
   FlatList, 
@@ -8,29 +7,36 @@ import {
   Dimensions, 
   Text,
   TouchableOpacity,
-  TouchableWithoutFeedback,
+  Pressable,
   Platform,
-  SafeAreaView
+  SafeAreaView,
+  AppState,
+  Image
 } from 'react-native';
-import { Video } from 'expo-av';
 import { collection, getDocs, query, orderBy, limit, startAfter } from 'firebase/firestore';
 import { firestore } from '../services/firebase';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import VideoPlayer from '../components/VideoPlayer';
+import { isVideoVisible, getVideoErrorMessage } from '../utils/videoHelpers';
+import ErrorBoundary from '../components/ErrorBoundary';
 
-const HomeScreen = () => {
+const HomeScreen = ({ navigation }) => {
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
+  const [isMuted, setIsMuted] = useState(true); 
   const [hasMoreVideos, setHasMoreVideos] = useState(true);
   const [dimensions, setDimensions] = useState(Dimensions.get('window'));
   const [orientationIsLandscape, setOrientationIsLandscape] = useState(
     dimensions.width > dimensions.height
   );
+  const [appState, setAppState] = useState(AppState.currentState);
+  const [error, setError] = useState(null);
   
   const flatListRef = useRef(null);
   const videoRefs = useRef({});
@@ -46,20 +52,50 @@ const HomeScreen = () => {
     return () => subscription?.remove();
   }, []);
 
+  // App state change handler
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextAppState => {
+      if (appState === 'active' && nextAppState.match(/inactive|background/)) {
+        // App is going to background - pause videos
+        pauseCurrentVideo();
+      } else if (appState.match(/inactive|background/) && nextAppState === 'active') {
+        // App is coming to foreground - resume playing if needed
+        if (isPlaying && videoRefs.current[videos[currentIndex]?.id]) {
+          try {
+            videoRefs.current[videos[currentIndex]?.id].playAsync();
+          } catch (error) {
+            console.error('Error resuming video:', error);
+          }
+        }
+      }
+      
+      setAppState(nextAppState);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [appState, currentIndex, videos, isPlaying]);
+
   // Initial video fetch
   useEffect(() => {
     fetchVideos();
     
     // Lock orientation to portrait by default
     if (Platform.OS !== 'web') {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
+        .catch(error => console.error('Error locking orientation:', error));
     }
     
     return () => {
       // Clean up video players when component unmounts
       Object.values(videoRefs.current).forEach(videoRef => {
         if (videoRef) {
-          videoRef.unloadAsync();
+          try {
+            videoRef.unloadAsync();
+          } catch (error) {
+            console.error('Error unloading video:', error);
+          }
         }
       });
     };
@@ -72,6 +108,7 @@ const HomeScreen = () => {
       } else {
         setLoading(true);
       }
+      setError(null);
       
       const videosCollection = collection(firestore, 'videos');
       let videosQuery;
@@ -97,6 +134,11 @@ const HomeScreen = () => {
         setHasMoreVideos(false);
         setLoadingMore(false);
         setLoading(false);
+        
+        // If first fetch has no videos, show a message
+        if (!fetchMore && videos.length === 0) {
+          setError('No videos found');
+        }
         return;
       }
       
@@ -117,14 +159,25 @@ const HomeScreen = () => {
       }
     } catch (error) {
       console.error('Error fetching videos:', error);
+      setError('Failed to load videos. Pull down to refresh.');
       setLoading(false);
       setLoadingMore(false);
     }
   };
 
   const loadMoreVideos = () => {
-    if (!loadingMore && hasMoreVideos) {
+    if (!loadingMore && hasMoreVideos && !error) {
       fetchVideos(true);
+    }
+  };
+
+  const pauseCurrentVideo = async () => {
+    if (videos[currentIndex]?.id && videoRefs.current[videos[currentIndex]?.id]) {
+      try {
+        await videoRefs.current[videos[currentIndex]?.id].pauseAsync();
+      } catch (error) {
+        console.error('Error pausing video:', error);
+      }
     }
   };
 
@@ -133,15 +186,23 @@ const HomeScreen = () => {
       const newIndex = viewableItems[0].index;
       
       // Pause previous video
-      if (currentIndex !== newIndex && videoRefs.current[videos[currentIndex]?.id]) {
-        videoRefs.current[videos[currentIndex]?.id].pauseAsync();
+      if (currentIndex !== newIndex && videos[currentIndex]?.id && videoRefs.current[videos[currentIndex]?.id]) {
+        try {
+          videoRefs.current[videos[currentIndex]?.id].pauseAsync();
+        } catch (error) {
+          console.error('Error pausing previous video:', error);
+        }
       }
       
       setCurrentIndex(newIndex);
       
       // Play current video if isPlaying is true
-      if (isPlaying && videoRefs.current[viewableItems[0].item.id]) {
-        videoRefs.current[viewableItems[0].item.id].playAsync();
+      if (isPlaying && viewableItems[0].item.id && videoRefs.current[viewableItems[0].item.id]) {
+        try {
+          videoRefs.current[viewableItems[0].item.id].playAsync();
+        } catch (error) {
+          console.error('Error playing current video:', error);
+        }
       }
     }
   }).current;
@@ -149,14 +210,49 @@ const HomeScreen = () => {
   const togglePlayPause = async (videoId) => {
     if (!videoRefs.current[videoId]) return;
     
-    const status = await videoRefs.current[videoId].getStatusAsync();
-    
-    if (status.isPlaying) {
-      await videoRefs.current[videoId].pauseAsync();
-      setIsPlaying(false);
-    } else {
-      await videoRefs.current[videoId].playAsync();
-      setIsPlaying(true);
+    try {
+      const status = await videoRefs.current[videoId].getStatusAsync();
+      
+      if (status.isPlaying) {
+        await videoRefs.current[videoId].pauseAsync();
+        setIsPlaying(false);
+      } else {
+        await videoRefs.current[videoId].playAsync();
+        setIsPlaying(true);
+      }
+    } catch (error) {
+      console.error('Error toggling play/pause:', error);
+    }
+  };
+
+  const toggleMute = async (videoId) => {
+    if (!videoRefs.current[videoId]) return;
+
+    try {
+      setIsMuted(prev => !prev);
+      
+      // Apply mute state to current video
+      await videoRefs.current[videoId].setIsMutedAsync(!isMuted);
+    } catch (error) {
+      console.error('Error toggling mute:', error);
+    }
+  };
+
+  const handleDoubleTap = (videoId) => {
+    // Add like functionality here
+    console.log('Double tapped video', videoId);
+    // You could increment likes here
+  };
+
+  const handleVideoError = (error, videoId) => {
+    console.error(`Error loading video ${videoId}:`, error);
+    // We don't set global error state here to avoid affecting the whole list
+    // Instead, each video component handles its own error state
+  };
+  
+  const setVideoRef = (ref, videoId) => {
+    if (ref) {
+      videoRefs.current[videoId] = ref;
     }
   };
 
@@ -166,26 +262,24 @@ const HomeScreen = () => {
     return (
       <View style={[styles.videoContainer, { 
         width: dimensions.width, 
-        height: orientationIsLandscape ? dimensions.height : dimensions.height
+        height: dimensions.height
       }]}>
-        <TouchableWithoutFeedback onPress={() => togglePlayPause(item.id)}>
-          <Video
-            ref={ref => videoRefs.current[item.id] = ref}
-            source={{ uri: item.videoUrl }}
-            rate={1.0}
-            volume={1.0}
-            isMuted={false}
-            resizeMode="cover"
+        <Pressable 
+          onPress={() => togglePlayPause(item.id)}
+          delayLongPress={150}
+          onLongPress={() => handleDoubleTap(item.id)}
+          style={styles.videoWrapper}
+        >
+          <VideoPlayer 
+            uri={item.videoUrl}
             shouldPlay={isCurrentVideo && isPlaying}
-            isLooping
+            isMuted={isMuted}
+            isActive={isVideoVisible(index, currentIndex, 0)}
             style={styles.video}
-            useNativeControls={false}
-            onPlaybackStatusUpdate={(status) => {
-              // You can use this to track video playback progress
-              // console.log(status);
-            }}
+            onRef={(ref) => setVideoRef(ref, item.id)}
+            onError={(error) => handleVideoError(error, item.id)}
           />
-        </TouchableWithoutFeedback>
+        </Pressable>
         
         {/* Play/Pause Indicator */}
         {!isPlaying && isCurrentVideo && (
@@ -225,6 +319,7 @@ const HomeScreen = () => {
           <TouchableOpacity 
             style={styles.interactionButton}
             activeOpacity={0.7}
+            onPress={() => navigation.navigate('VideoDetail', { videoId: item.id })}
           >
             <Ionicons name="chatbubble-outline" size={28} color="white" />
             <Text style={styles.interactionText}>{item.comments || 0}</Text>
@@ -239,8 +334,22 @@ const HomeScreen = () => {
           </TouchableOpacity>
           
           <TouchableOpacity 
+            style={styles.interactionButton}
+            activeOpacity={0.7}
+            onPress={() => toggleMute(item.id)}
+          >
+            <Ionicons 
+              name={isMuted ? "volume-mute-outline" : "volume-high-outline"} 
+              size={28} 
+              color="white" 
+            />
+            <Text style={styles.interactionText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
             style={styles.profileButton}
             activeOpacity={0.7}
+            onPress={() => navigation.navigate('Profile', { userId: item.userId })}
           >
             <View style={styles.profileImageContainer}>
               {item.userProfilePic ? (
@@ -268,57 +377,83 @@ const HomeScreen = () => {
     );
   }
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <StatusBar style="light" />
-      <FlatList
-        ref={flatListRef}
-        data={videos}
-        renderItem={renderVideo}
-        keyExtractor={item => item.id}
-        pagingEnabled
-        showsVerticalScrollIndicator={false}
-        snapToInterval={dimensions.height}
-        snapToAlignment="start"
-        decelerationRate="fast"
-        initialNumToRender={3}
-        maxToRenderPerBatch={3}
-        windowSize={5}
-        viewabilityConfig={{
-          itemVisiblePercentThreshold: 50,
-          minimumViewTime: 300
-        }}
-        onViewableItemsChanged={onViewableItemsChanged}
-        onRefresh={() => {
-          lastDocRef.current = null;
-          setHasMoreVideos(true);
-          fetchVideos();
-        }}
-        refreshing={loading}
-        onEndReached={loadMoreVideos}
-        onEndReachedThreshold={0.5}
-        ListFooterComponent={() => 
-          loadingMore ? (
-            <View style={styles.footerLoader}>
-              <ActivityIndicator size="small" color="#ff416c" />
-            </View>
-          ) : null
-        }
-      />
-      
-      {/* Top Navigation */}
-      <View style={[styles.topNav, {
-        paddingTop: Platform.OS === 'ios' ? 0 : 30
-      }]}>
-        <TouchableOpacity style={styles.navItem}>
-          <Text style={[styles.navText, styles.activeNavText]}>For You</Text>
-          <View style={styles.activeIndicator} />
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Text style={styles.navText}>Following</Text>
+  if (error && videos.length === 0) {
+    return (
+      <View style={styles.errorContainer}>
+        <Text style={styles.errorText}>{error}</Text>
+        <TouchableOpacity 
+          style={styles.retryButton}
+          onPress={() => {
+            setError(null);
+            lastDocRef.current = null;
+            fetchVideos();
+          }}
+        >
+          <Text style={styles.retryText}>Retry</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    );
+  }
+
+  return (
+    <ErrorBoundary>
+      <SafeAreaView style={styles.container}>
+        <StatusBar style="light" />
+        <FlatList
+          ref={flatListRef}
+          data={videos}
+          renderItem={renderVideo}
+          keyExtractor={item => item.id}
+          pagingEnabled
+          showsVerticalScrollIndicator={false}
+          snapToInterval={dimensions.height}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          initialNumToRender={2}
+          maxToRenderPerBatch={3}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS !== 'web'}
+          viewabilityConfig={{
+            itemVisiblePercentThreshold: 50,
+            minimumViewTime: 300
+          }}
+          onViewableItemsChanged={onViewableItemsChanged}
+          onRefresh={() => {
+            lastDocRef.current = null;
+            setHasMoreVideos(true);
+            setError(null);
+            fetchVideos();
+          }}
+          refreshing={loading}
+          onEndReached={loadMoreVideos}
+          onEndReachedThreshold={0.5}
+          ListFooterComponent={() => 
+            loadingMore ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator size="small" color="#ff416c" />
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={() => (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No videos found</Text>
+            </View>
+          )}
+        />
+        
+        {/* Top Navigation */}
+        <View style={[styles.topNav, {
+          paddingTop: Platform.OS === 'ios' ? 0 : 30
+        }]}>
+          <TouchableOpacity style={styles.navItem}>
+            <Text style={[styles.navText, styles.activeNavText]}>For You</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem}>
+            <Text style={styles.navText}>Following</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    </ErrorBoundary>
   );
 };
 
@@ -333,29 +468,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#000',
   },
-  videoContainer: {
-    backgroundColor: '#101010',
+  errorContainer: {
+    flex: 1,
     justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
+    padding: 20,
+  },
+  errorText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  retryButton: {
+    backgroundColor: '#ff416c',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 5,
+  },
+  retryText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  videoContainer: {
+    width: '100%',
+    height: '100%', // Ensure full screen height
     position: 'relative',
   },
+  videoWrapper: {
+    flex: 1,
+  },
   video: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    right: 0,
+    flex: 1,
   },
   playPauseContainer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 10,
+    zIndex: 1,
   },
   playPauseButton: {
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -364,68 +521,52 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: 180,
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 20,
-    justifyContent: 'flex-end',
+    paddingBottom: 20,
   },
   userInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: 60,
   },
   userDetails: {
     flex: 1,
-    paddingRight: 80, // Make space for interaction buttons
   },
   username: {
-    color: 'white',
+    color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
     marginBottom: 5,
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
   },
   caption: {
-    color: 'white',
+    color: '#fff',
     fontSize: 14,
-    lineHeight: 19,
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
-    textShadowOffset: { width: 0.5, height: 0.5 },
-    textShadowRadius: 2,
   },
   interactionContainer: {
     position: 'absolute',
-    right: 15,
-    bottom: Platform.OS === 'ios' ? 120 : 100,
+    right: 10,
+    bottom: 100,
     alignItems: 'center',
-    zIndex: 10,
   },
   interactionButton: {
     alignItems: 'center',
-    marginBottom: 18,
+    marginBottom: 20,
   },
   interactionText: {
-    color: 'white',
-    marginTop: 3,
+    color: '#fff',
+    marginTop: 5,
     fontSize: 12,
-    fontWeight: '500',
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
-    textShadowOffset: { width: 0.5, height: 0.5 },
-    textShadowRadius: 2,
   },
   profileButton: {
-    marginTop: 8,
+    marginTop: 10,
   },
   profileImageContainer: {
     width: 48,
     height: 48,
     borderRadius: 24,
     borderWidth: 2,
-    borderColor: 'white',
+    borderColor: '#fff',
     overflow: 'hidden',
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   profileImage: {
     width: '100%',
@@ -437,9 +578,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   profileInitial: {
-    color: 'white',
-    fontSize: 20,
+    color: '#fff',
+    fontSize: 22,
     fontWeight: 'bold',
+  },
+  progressBarContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  progressBar: {
+    height: '100%',
+  },
+  progressIndicator: {
+    height: '100%',
+    backgroundColor: '#ff416c',
   },
   topNav: {
     position: 'absolute',
@@ -449,12 +605,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     paddingVertical: 15,
-    zIndex: 100,
-    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    zIndex: 10,
   },
   navItem: {
-    marginHorizontal: 18,
-    alignItems: 'center',
+    paddingHorizontal: 20,
   },
   navText: {
     color: 'rgba(255, 255, 255, 0.7)',
@@ -465,16 +620,18 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
   },
-  activeIndicator: {
-    width: 20,
-    height: 3,
-    backgroundColor: '#fff',
-    borderRadius: 3,
-    marginTop: 5,
-  },
   footerLoader: {
     paddingVertical: 20,
+  },
+  emptyContainer: {
+    flex: 1,
+    height: 300,
+    justifyContent: 'center',
     alignItems: 'center',
+  },
+  emptyText: {
+    color: '#fff',
+    fontSize: 16,
   }
 });
 

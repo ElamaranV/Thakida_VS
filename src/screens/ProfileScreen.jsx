@@ -33,12 +33,15 @@ import {
     getDoc,
     orderBy,
     limit,
+    setDoc,
+    deleteDoc,
+    serverTimestamp
 } from 'firebase/firestore';
-import { Video } from 'expo-av';
-import { getStorage, ref, uploadBytes } from 'firebase/storage';
 import { firestore, auth } from '../services/firebase';
-import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import VideoPlayer from '../components/VideoPlayer';
+import { extractThumbnailFromVideo } from '../utils/videoHelpers';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const { width, height } = Dimensions.get('window');
 const HEADER_MAX_HEIGHT = 320;
@@ -54,6 +57,7 @@ export default function ProfileScreen({ navigation, route }) {
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState('videos');
+    const [error, setError] = useState(null);
     
     const scrollY = useRef(new Animated.Value(0)).current;
     const userId = route.params?.userId || auth.currentUser?.uid;
@@ -88,6 +92,7 @@ export default function ProfileScreen({ navigation, route }) {
         const loadUserData = async () => {
             try {
                 setLoading(true);
+                setError(null);
                 const currentUserId = auth.currentUser?.uid;
                 setIsCurrentUser(currentUserId === userId);
     
@@ -97,33 +102,47 @@ export default function ProfileScreen({ navigation, route }) {
                     setUser(userData);
     
                     // Fetch posts after user data is set
-                    const postsCount = await fetchUserPosts();
+                    fetchUserPosts(userData.username);
     
                     if (currentUserId && currentUserId !== userId) {
-                        const followDoc = await getDoc(
-                            doc(firestore, 'followers', userId, 'userFollowers', currentUserId)
-                        );
-                        setIsFollowing(followDoc.exists());
+                        try {
+                            const followDoc = await getDoc(
+                                doc(firestore, 'followers', userId, 'userFollowers', currentUserId)
+                            );
+                            setIsFollowing(followDoc.exists());
+                        } catch (followError) {
+                            console.error('Error checking follow status:', followError);
+                        }
                     }
     
-                    const followerSnapshot = await getDocs(
-                        collection(firestore, 'followers', userId, 'userFollowers')
-                    );
-                    const followingSnapshot = await getDocs(
-                        collection(firestore, 'following', userId, 'userFollowing')
-                    );
-    
-                    setStats({
-                        posts: postsCount,
-                        followers: followerSnapshot.size,
-                        following: followingSnapshot.size,
-                    });
+                    try {
+                        const followerSnapshot = await getDocs(
+                            collection(firestore, 'followers', userId, 'userFollowers')
+                        );
+                        const followingSnapshot = await getDocs(
+                            collection(firestore, 'following', userId, 'userFollowing')
+                        );
+        
+                        setStats({
+                            posts: 0, // Will be updated after fetching posts
+                            followers: followerSnapshot.size,
+                            following: followingSnapshot.size,
+                        });
+                    } catch (statsError) {
+                        console.error('Error fetching stats:', statsError);
+                        setStats({
+                            posts: 0,
+                            followers: 0,
+                            following: 0,
+                        });
+                    }
                 } else {
+                    setError('User not found');
                     Alert.alert('Error', 'User not found');
-                    navigation.goBack();
                 }
             } catch (error) {
                 console.error('Error loading user data:', error);
+                setError('Failed to load profile');
                 Alert.alert('Error', 'Failed to load profile. Please try again.');
             } finally {
                 setLoading(false);
@@ -132,21 +151,17 @@ export default function ProfileScreen({ navigation, route }) {
     
         loadUserData();
     }, [userId]);
-    
-    // Add this effect to fetch posts when user data changes
-    useEffect(() => {
-        if (user?.username) {
-            fetchUserPosts();
-        }
-    }, [user?.username]);
 
-    const fetchUserPosts = async () => {
+    const fetchUserPosts = async (username) => {
+        if (!username) {
+            console.error('Username is required to fetch posts');
+            return;
+        }
+        
         try {
-            if (!user?.username) return 0; // Add this check
-            
             const postsQuery = query(
                 collection(firestore, 'videos'),
-                where('username', '==', user.username), // Remove optional chaining
+                where('username', '==', username),
                 orderBy('createdAt', 'desc'),
                 limit(50)
             );
@@ -158,6 +173,13 @@ export default function ProfileScreen({ navigation, route }) {
             }));
     
             setPosts(postsData);
+            
+            // Update the stats with post count
+            setStats(prev => ({
+                ...prev,
+                posts: postsData.length
+            }));
+            
             return postsData.length;
         } catch (error) {
             console.error('Error fetching user posts:', error);
@@ -167,71 +189,150 @@ export default function ProfileScreen({ navigation, route }) {
 
     const handleRefresh = async () => {
         setRefreshing(true);
+        setError(null);
+        
         try {
-            const postsCount = await fetchUserPosts();
-
             const userDoc = await getDoc(doc(firestore, 'users', userId));
             if (userDoc.exists()) {
-                setUser(userDoc.data());
+                const userData = userDoc.data();
+                setUser(userData);
+                
+                // Fetch updated posts
+                await fetchUserPosts(userData.username);
+                
+                // Fetch updated follower/following counts
+                const followerSnapshot = await getDocs(
+                    collection(firestore, 'followers', userId, 'userFollowers')
+                );
+                const followingSnapshot = await getDocs(
+                    collection(firestore, 'following', userId, 'userFollowing')
+                );
+
+                setStats(prev => ({
+                    ...prev,
+                    followers: followerSnapshot.size,
+                    following: followingSnapshot.size,
+                }));
+            } else {
+                setError('User not found');
             }
-
-            const followerSnapshot = await getDocs(
-                collection(firestore, 'followers', userId, 'userFollowers')
-            );
-            const followingSnapshot = await getDocs(
-                collection(firestore, 'following', userId, 'userFollowing')
-            );
-
-            setStats({
-                posts: postsCount,
-                followers: followerSnapshot.size,
-                following: followingSnapshot.size,
-            });
         } catch (error) {
             console.error('Error refreshing data:', error);
+            setError('Failed to refresh data');
         } finally {
             setRefreshing(false);
         }
     };
 
     const handleFollow = async () => {
-        // Implement follow/unfollow functionality
-        setIsFollowing(!isFollowing);
+        if (!auth.currentUser) {
+            Alert.alert('Login Required', 'Please login to follow users');
+            return;
+        }
+
+        try {
+            const followerRef = doc(firestore, 'followers', userId, 'userFollowers', auth.currentUser.uid);
+            const followingRef = doc(firestore, 'following', auth.currentUser.uid, 'userFollowing', userId);
+            
+            if (isFollowing) {
+                // Unfollow
+                await deleteDoc(followerRef);
+                await deleteDoc(followingRef);
+                
+                // Update follower count
+                setStats(prev => ({
+                    ...prev,
+                    followers: Math.max(0, prev.followers - 1)
+                }));
+            } else {
+                // Follow
+                await setDoc(followerRef, {
+                    createdAt: serverTimestamp()
+                });
+                await setDoc(followingRef, {
+                    createdAt: serverTimestamp()
+                });
+                
+                // Update follower count
+                setStats(prev => ({
+                    ...prev,
+                    followers: prev.followers + 1
+                }));
+            }
+            
+            setIsFollowing(!isFollowing);
+        } catch (error) {
+            console.error('Error updating follow status:', error);
+            Alert.alert('Error', 'Failed to update follow status. Please try again.');
+        }
+    };
+
+    const navigateToVideo = (videoId) => {
+        navigation.navigate('VideoDetail', { videoId });
     };
 
     const renderVideoItem = ({ item, index }) => {
-        // Calculate delay for staggered animation
         return (
             <Animated.View style={styles.videoItem}>
                 <TouchableOpacity
                     activeOpacity={0.8}
-                    onPress={() => navigation.navigate('VideoDetail', { videoId: item.id })}
+                    onPress={() => navigateToVideo(item.id)}
                 >
                     <View style={styles.videoThumbnail}>
-                        <Video
-                            source={{ uri: item.videoUrl }}
-                            style={styles.thumbnailImage}
-                            resizeMode="cover"
-                            shouldPlay={false}
-                            isMuted={true}
-                            useNativeControls={false}
-                        />
-                        
-                        <View style={styles.videoStats}>
-                            <View style={styles.videoStatItem}>
-                                <Ionicons name="play" size={12} color="#fff" />
-                                <Text style={styles.videoStatText}>{item.likes || 0}</Text>
+                        {item.videoUrl ? (
+                            <VideoPlayer
+                                uri={item.videoUrl}
+                                shouldPlay={false}
+                                isMuted={true}
+                                isActive={false}
+                                style={styles.thumbnailImage}
+                            />
+                        ) : (
+                            <View style={styles.thumbnailPlaceholder}>
+                                <MaterialCommunityIcons name="video-off" size={40} color="#ddd" />
                             </View>
+                        )}
+                        
+                        {/* Play Icon Overlay */}
+                        <View style={styles.playIconOverlay}>
+                            <Ionicons name="play" size={24} color="#fff" />
                         </View>
                     </View>
                     
                     <Text numberOfLines={1} style={styles.videoCaption}>
                         {item.caption || 'No caption'}
                     </Text>
+                    
+                    <View style={styles.videoStats}>
+                        <View style={styles.videoStat}>
+                            <Ionicons name="eye-outline" size={14} color="#999" />
+                            <Text style={styles.videoStatText}>{item.views || 0}</Text>
+                        </View>
+                        
+                        <View style={styles.videoStat}>
+                            <Ionicons name="heart-outline" size={14} color="#999" />
+                            <Text style={styles.videoStatText}>{item.likes || 0}</Text>
+                        </View>
+                    </View>
                 </TouchableOpacity>
             </Animated.View>
         );
     };
+
+    const renderEmptyState = () => (
+        <View style={styles.emptyStateContainer}>
+            <MaterialCommunityIcons name="video-off-outline" size={60} color="#ccc" />
+            <Text style={styles.emptyStateText}>No videos yet</Text>
+            {isCurrentUser && (
+                <TouchableOpacity 
+                    style={styles.createVideoButton}
+                    onPress={() => navigation.navigate('CreateVideo')}
+                >
+                    <Text style={styles.createVideoButtonText}>Create Video</Text>
+                </TouchableOpacity>
+            )}
+        </View>
+    );
 
     if (loading && !refreshing) {
         return (
@@ -241,357 +342,413 @@ export default function ProfileScreen({ navigation, route }) {
         );
     }
 
-    return (
-        <SafeAreaView style={styles.container}>
-            <StatusBar barStyle="light-content" />
-            
-            {/* Animated Header */}
-            <Animated.View style={[
-                styles.header,
-                { 
-                    height: headerHeight,
-                    paddingTop: insets.top
-                }
-            ]}>
-                <LinearGradient
-                    colors={['#ff416c', '#ff4b2b']}
-                    style={styles.headerGradient}
+    if (error && !refreshing && !user) {
+        return (
+            <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity 
+                    style={styles.retryButton}
+                    onPress={() => {
+                        setError(null);
+                        setLoading(true);
+                        const loadUserData = async () => {
+                            try {
+                                const userDoc = await getDoc(doc(firestore, 'users', userId));
+                                if (userDoc.exists()) {
+                                    setUser(userDoc.data());
+                                    fetchUserPosts(userDoc.data().username);
+                                } else {
+                                    setError('User not found');
+                                }
+                            } catch (error) {
+                                setError('Failed to load profile');
+                            } finally {
+                                setLoading(false);
+                            }
+                        };
+                        loadUserData();
+                    }}
                 >
-                    {/* Back button */}
-                    <TouchableOpacity 
-                        style={[styles.backButton, { top: insets.top + 10 }]} 
-                        onPress={() => navigation.goBack()}
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
+
+    return (
+        <ErrorBoundary>
+            <SafeAreaView style={styles.container}>
+                <StatusBar barStyle="light-content" />
+                
+                {/* Animated Header */}
+                <Animated.View style={[
+                    styles.header,
+                    { 
+                        height: headerHeight,
+                        paddingTop: insets.top
+                    }
+                ]}>
+                    <LinearGradient
+                        colors={['#ff416c', '#ff4b2b']}
+                        style={styles.headerGradient}
                     >
-                        <Ionicons name="arrow-back" size={24} color="#fff" />
-                    </TouchableOpacity>
-                    
-                    {/* Settings button for current user's profile */}
-                    {isCurrentUser && (
+                        {/* Back button */}
                         <TouchableOpacity 
-                            style={[styles.settingsButton, { top: insets.top + 10 }]} 
-                            onPress={() => navigation.navigate('Settings')}
+                            style={[styles.backButton, { top: insets.top + 10 }]} 
+                            onPress={() => navigation.goBack()}
                         >
-                            <Ionicons name="settings-outline" size={24} color="#fff" />
+                            <Ionicons name="arrow-back" size={24} color="#fff" />
                         </TouchableOpacity>
-                    )}
-                    
-                    {/* Profile Banner Content */}
-                    <Animated.View style={[styles.profileBannerContent, { opacity: profileInfoOpacity }]}>
-                        <View style={styles.profileImageContainer}>
-                            {user?.profilePicture ? (
-                                <Image 
-                                    source={{ uri: user.profilePicture }} 
-                                    style={styles.profileImage}
-                                />
-                            ) : (
-                                <View style={styles.profileImagePlaceholder}>
-                                    <FontAwesome5 name="user-alt" size={40} color="#fff" />
-                                </View>
-                            )}
-                        </View>
                         
-                        <Text style={styles.username}>@{user?.username || 'username'}</Text>
-                        <Text style={styles.displayName}>{user?.displayName || 'Display Name'}</Text>
-                        
-                        {user?.bio && (
-                            <Text style={styles.bio} numberOfLines={2}>
-                                {user.bio}
-                            </Text>
+                        {/* Settings button for current user's profile */}
+                        {isCurrentUser && (
+                            <TouchableOpacity 
+                                style={[styles.settingsButton, { top: insets.top + 10 }]} 
+                                onPress={() => navigation.navigate('Settings')}
+                            >
+                                <Ionicons name="settings-outline" size={24} color="#fff" />
+                            </TouchableOpacity>
                         )}
                         
-                        {/* Profile Action Buttons */}
-                        <View style={styles.profileActionButtons}>
-                            {isCurrentUser ? (
-                                <TouchableOpacity 
-                                    style={styles.editProfileButton}
-                                    onPress={() => navigation.navigate('EditProfile')}
-                                >
-                                    <Text style={styles.editProfileButtonText}>Edit Profile</Text>
-                                </TouchableOpacity>
-                            ) : (
-                                <TouchableOpacity 
-                                    style={[
-                                        styles.followButton, 
-                                        isFollowing ? styles.followingButton : null
-                                    ]}
-                                    onPress={handleFollow}
-                                >
-                                    <Text style={[
-                                        styles.followButtonText,
-                                        isFollowing ? styles.followingButtonText : null
-                                    ]}>
-                                        {isFollowing ? 'Following' : 'Follow'}
-                                    </Text>
-                                </TouchableOpacity>
+                        {/* Profile Banner Content */}
+                        <Animated.View style={[styles.profileBannerContent, { opacity: profileInfoOpacity }]}>
+                            <View style={styles.profileImageContainer}>
+                                {user?.userProfilePic ? (
+                                    <Image 
+                                        source={{ uri: user.userProfilePic }}
+                                        style={styles.profileImage}
+                                    />
+                                ) : (
+                                    <View style={styles.profileImagePlaceholder}>
+                                        <FontAwesome5 name="user-alt" size={40} color="#fff" />
+                                    </View>
+                                )}
+                            </View>
+                            
+                            <Text style={styles.username}>@{user?.username || 'username'}</Text>
+                            <Text style={styles.displayName}>{user?.displayName || 'Display Name'}</Text>
+                            
+                            {user?.bio && (
+                                <Text style={styles.bio} numberOfLines={2}>
+                                    {user.bio}
+                                </Text>
                             )}
                             
-                            <TouchableOpacity style={styles.messageButton}>
-                                <Feather name="send" size={18} color="#ff416c" />
-                            </TouchableOpacity>
-                        </View>
-                    </Animated.View>
-                </LinearGradient>
-            </Animated.View>
-            
-            {/* Collapsible Header Title */}
-            <Animated.View style={[
-                styles.collapsedHeader,
-                { 
-                    opacity: titleOpacity,
-                    paddingTop: insets.top
-                }
-            ]}>
-                <Text style={styles.collapsedHeaderTitle}>{user?.username || 'username'}</Text>
-            </Animated.View>
-            
-            <Animated.ScrollView
-                contentContainerStyle={styles.scrollContainer}
-                scrollEventThrottle={16}
-                onScroll={Animated.event(
-                    [{ nativeEvent: { contentOffset: { y: scrollY } } }],
-                    { useNativeDriver: true }
-                )}
-                refreshControl={
-                    <RefreshControl
-                        refreshing={refreshing}
-                        onRefresh={handleRefresh}
-                        tintColor="#ff416c"
-                    />
-                }
-            >
-                <View style={{ height: HEADER_MAX_HEIGHT }} />
+                            {/* Profile Stats */}
+                            <View style={styles.statsContainer}>
+                                <View style={styles.statItem}>
+                                    <Text style={styles.statValue}>{stats.posts}</Text>
+                                    <Text style={styles.statLabel}>Posts</Text>
+                                </View>
+                                
+                                <View style={styles.statItem}>
+                                    <Text style={styles.statValue}>{stats.followers}</Text>
+                                    <Text style={styles.statLabel}>Followers</Text>
+                                </View>
+                                
+                                <View style={styles.statItem}>
+                                    <Text style={styles.statValue}>{stats.following}</Text>
+                                    <Text style={styles.statLabel}>Following</Text>
+                                </View>
+                            </View>
+                            
+                            {/* Profile Action Buttons */}
+                            <View style={styles.profileActionButtons}>
+                                {isCurrentUser ? (
+                                    <TouchableOpacity 
+                                        style={styles.editProfileButton}
+                                        onPress={() => navigation.navigate('EditProfile')}
+                                    >
+                                        <Text style={styles.editProfileButtonText}>Edit Profile</Text>
+                                    </TouchableOpacity>
+                                ) : (
+                                    <TouchableOpacity 
+                                        style={[
+                                            styles.followButton, 
+                                            isFollowing ? styles.followingButton : null
+                                        ]}
+                                        onPress={handleFollow}
+                                    >
+                                        <Text style={[
+                                            styles.followButtonText,
+                                            isFollowing ? styles.followingButtonText : null
+                                        ]}>
+                                            {isFollowing ? 'Following' : 'Follow'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                )}
+                                
+                                {!isCurrentUser && (
+                                    <TouchableOpacity style={styles.messageButton}>
+                                        <Feather name="send" size={18} color="#ff416c" />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        </Animated.View>
+                        
+                        {/* Header Title (Appears when scrolled) */}
+                        <Animated.Text 
+                            style={[
+                                styles.headerTitle, 
+                                { 
+                                    opacity: titleOpacity,
+                                    top: insets.top + 10
+                                }
+                            ]}
+                        >
+                            @{user?.username || 'username'}
+                        </Animated.Text>
+                    </LinearGradient>
+                </Animated.View>
                 
-                {/* Stats Section */}
-                <View style={styles.statsSection}>
-                    <Pressable style={styles.statItem}>
-                        <Text style={styles.statValue}>{stats.posts}</Text>
-                        <Text style={styles.statLabel}>Posts</Text>
-                    </Pressable>
-                    
-                    <Pressable
-                        style={styles.statItem}
-                        onPress={() => navigation.navigate('FollowersList', { userId })}
-                    >
-                        <Text style={styles.statValue}>{stats.followers}</Text>
-                        <Text style={styles.statLabel}>Followers</Text>
-                    </Pressable>
-                    
-                    <Pressable
-                        style={styles.statItem}
-                        onPress={() => navigation.navigate('FollowingList', { userId })}
-                    >
-                        <Text style={styles.statValue}>{stats.following}</Text>
-                        <Text style={styles.statLabel}>Following</Text>
-                    </Pressable>
-                </View>
-                
-                {/* Tab Navigation */}
-                <View style={styles.tabNavigation}>
-                    <TouchableOpacity
-                        style={[
-                            styles.tabButton,
-                            activeTab === 'videos' && styles.activeTabButton
-                        ]}
-                        onPress={() => setActiveTab('videos')}
-                    >
-                        <MaterialIcons 
-                            name="grid-on" 
-                            size={24} 
-                            color={activeTab === 'videos' ? '#ff416c' : '#888'} 
+                {/* Content Tabs and Feed */}
+                <Animated.ScrollView
+                    contentContainerStyle={{ paddingTop: HEADER_MAX_HEIGHT }}
+                    scrollEventThrottle={16}
+                    onScroll={Animated.event(
+                        [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+                        { useNativeDriver: false }
+                    )}
+                    refreshControl={
+                        <RefreshControl
+                            refreshing={refreshing}
+                            onRefresh={handleRefresh}
+                            progressViewOffset={HEADER_MAX_HEIGHT}
+                            colors={['#ff416c']}
+                            tintColor="#ff416c"
                         />
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                        style={[
-                            styles.tabButton,
-                            activeTab === 'liked' && styles.activeTabButton
-                        ]}
-                        onPress={() => setActiveTab('liked')}
-                    >
-                        <MaterialIcons 
-                            name="favorite-border" 
-                            size={24} 
-                            color={activeTab === 'liked' ? '#ff416c' : '#888'} 
-                        />
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity
-                        style={[
-                            styles.tabButton,
-                            activeTab === 'saved' && styles.activeTabButton
-                        ]}
-                        onPress={() => setActiveTab('saved')}
-                    >
-                        <MaterialIcons 
-                            name="bookmark-border" 
-                            size={24} 
-                            color={activeTab === 'saved' ? '#ff416c' : '#888'} 
-                        />
-                    </TouchableOpacity>
-                </View>
-                
-                {/* Videos Grid */}
-                {activeTab === 'videos' && (
-                    posts.length > 0 ? (
-                        <FlatList
-                            data={posts}
-                            renderItem={renderVideoItem}
-                            keyExtractor={(item) => item.id}
-                            numColumns={3}
-                            style={styles.contentGrid}
-                            scrollEnabled={false}
-                        />
-                    ) : (
-                        <View style={styles.emptyStateContainer}>
-                            <MaterialCommunityIcons name="video-off" size={60} color="#ddd" />
-                            <Text style={styles.emptyStateText}>No videos yet</Text>
-                            {isCurrentUser && (
-                                <TouchableOpacity 
-                                    style={styles.uploadButton}
-                                    onPress={() => navigation.navigate('Add')}
-                                >
-                                    <Text style={styles.uploadButtonText}>Upload your first video</Text>
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                    )
-                )}
-                
-                {/* Liked Videos - Could be implemented similar to the videos grid */}
-                {activeTab === 'liked' && (
-                    <View style={styles.emptyStateContainer}>
-                        <MaterialIcons name="favorite" size={60} color="#ddd" />
-                        <Text style={styles.emptyStateText}>No liked videos yet</Text>
+                    }
+                >
+                    {/* Tabs */}
+                    <View style={styles.tabsContainer}>
+                        <TouchableOpacity 
+                            style={[
+                                styles.tab, 
+                                activeTab === 'videos' ? styles.activeTab : null
+                            ]}
+                            onPress={() => setActiveTab('videos')}
+                        >
+                            <Ionicons
+                                name="grid-outline"
+                                size={24}
+                                color={activeTab === 'videos' ? '#ff416c' : '#888'}
+                            />
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity 
+                            style={[
+                                styles.tab, 
+                                activeTab === 'liked' ? styles.activeTab : null
+                            ]}
+                            onPress={() => setActiveTab('liked')}
+                        >
+                            <Ionicons
+                                name="heart-outline"
+                                size={24}
+                                color={activeTab === 'liked' ? '#ff416c' : '#888'}
+                            />
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity 
+                            style={[
+                                styles.tab, 
+                                activeTab === 'saved' ? styles.activeTab : null
+                            ]}
+                            onPress={() => setActiveTab('saved')}
+                        >
+                            <Ionicons
+                                name="bookmark-outline"
+                                size={24}
+                                color={activeTab === 'saved' ? '#ff416c' : '#888'}
+                            />
+                        </TouchableOpacity>
                     </View>
-                )}
-                
-                {/* Saved Videos - Could be implemented similar to the videos grid */}
-                {activeTab === 'saved' && (
-                    <View style={styles.emptyStateContainer}>
-                        <MaterialIcons name="bookmark" size={60} color="#ddd" />
-                        <Text style={styles.emptyStateText}>No saved videos yet</Text>
+
+                    {/* Content Display */}
+                    <View style={styles.contentContainer}>
+                        {activeTab === 'videos' && (
+                            <>
+                                {posts.length > 0 ? (
+                                    <View style={styles.videosGrid}>
+                                        {posts.map((post, index) => renderVideoItem({ item: post, index }))}
+                                    </View>
+                                ) : (
+                                    renderEmptyState()
+                                )}
+                            </>
+                        )}
+                        
+                        {activeTab === 'liked' && (
+                            <View style={styles.emptyStateContainer}>
+                                <Ionicons name="heart" size={60} color="#ccc" />
+                                <Text style={styles.emptyStateText}>
+                                    No liked videos yet
+                                </Text>
+                            </View>
+                        )}
+                        
+                        {activeTab === 'saved' && (
+                            <View style={styles.emptyStateContainer}>
+                                <Ionicons name="bookmark" size={60} color="#ccc" />
+                                <Text style={styles.emptyStateText}>
+                                    No saved videos yet
+                                </Text>
+                            </View>
+                        )}
                     </View>
-                )}
-                
-                {/* Add padding at bottom for better UX */}
-                <View style={{ height: 20 }} />
-            </Animated.ScrollView>
-        </SafeAreaView>
+                </Animated.ScrollView>
+            </SafeAreaView>
+        </ErrorBoundary>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        backgroundColor: '#fff',
+        backgroundColor: '#000',
     },
     loadingContainer: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#fff',
+        backgroundColor: '#000',
     },
-    scrollContainer: {
-        flexGrow: 1,
+    errorContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: '#000',
+        padding: 20,
+    },
+    errorText: {
+        color: '#fff',
+        fontSize: 16,
+        marginBottom: 20,
+        textAlign: 'center',
+    },
+    retryButton: {
+        backgroundColor: '#ff416c',
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        borderRadius: 5,
+    },
+    retryButtonText: {
+        color: '#fff',
+        fontWeight: 'bold',
     },
     header: {
         position: 'absolute',
         top: 0,
         left: 0,
         right: 0,
+        zIndex: 1,
         overflow: 'hidden',
-        zIndex: 10,
     },
     headerGradient: {
         flex: 1,
-        justifyContent: 'flex-end',
-        padding: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     backButton: {
         position: 'absolute',
         left: 15,
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.2)',
-        zIndex: 100,
+        zIndex: 10,
     },
     settingsButton: {
         position: 'absolute',
         right: 15,
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.2)',
-        zIndex: 100,
+        zIndex: 10,
+    },
+    headerTitle: {
+        position: 'absolute',
+        alignSelf: 'center',
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: 'bold',
     },
     profileBannerContent: {
-        alignItems: 'center',
-    },
-    profileImageContainer: {
-        marginBottom: 10,
-    },
-    profileImage: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        borderWidth: 3,
-        borderColor: '#fff',
-    },
-    profileImagePlaceholder: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        backgroundColor: 'rgba(0,0,0,0.2)',
+        width: '100%',
+        height: '100%',
         justifyContent: 'center',
         alignItems: 'center',
+        paddingTop: 40,
+    },
+    profileImageContainer: {
+        width: 100,
+        height: 100,
+        borderRadius: 50,
+        marginBottom: 10,
         borderWidth: 3,
         borderColor: '#fff',
+        overflow: 'hidden',
+    },
+    profileImage: {
+        width: '100%',
+        height: '100%',
+    },
+    profileImagePlaceholder: {
+        width: '100%',
+        height: '100%',
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
+        justifyContent: 'center',
+        alignItems: 'center',
     },
     username: {
+        color: '#fff',
         fontSize: 16,
-        color: '#fff',
-        marginBottom: 2,
-        fontWeight: '500',
-    },
-    displayName: {
-        fontSize: 22,
         fontWeight: 'bold',
-        color: '#fff',
         marginBottom: 5,
     },
-    bio: {
-        fontSize: 14,
+    displayName: {
         color: '#fff',
+        fontSize: 20,
+        fontWeight: 'bold',
+        marginBottom: 10,
+    },
+    bio: {
+        color: '#fff',
+        fontSize: 14,
         textAlign: 'center',
-        maxWidth: '80%',
         marginBottom: 15,
+        width: '80%',
+    },
+    statsContainer: {
+        flexDirection: 'row',
+        marginVertical: 10,
+        width: '80%',
+        justifyContent: 'space-around',
+    },
+    statItem: {
+        alignItems: 'center',
+    },
+    statValue: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    statLabel: {
+        color: '#fff',
+        fontSize: 12,
     },
     profileActionButtons: {
         flexDirection: 'row',
-        marginTop: 5,
+        marginTop: 15,
     },
     editProfileButton: {
-        paddingHorizontal: 30,
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
         paddingVertical: 8,
-        borderRadius: 20,
-        backgroundColor: '#fff',
-        marginRight: 10,
+        paddingHorizontal: 20,
+        borderRadius: 5,
     },
     editProfileButtonText: {
-        color: '#ff416c',
-        fontWeight: '600',
+        color: '#fff',
+        fontWeight: 'bold',
     },
     followButton: {
-        paddingHorizontal: 30,
-        paddingVertical: 8,
-        borderRadius: 20,
         backgroundColor: '#fff',
-        marginRight: 10,
+        paddingVertical: 8,
+        paddingHorizontal: 20,
+        borderRadius: 5,
     },
     followingButton: {
         backgroundColor: 'transparent',
@@ -600,142 +757,121 @@ const styles = StyleSheet.create({
     },
     followButtonText: {
         color: '#ff416c',
-        fontWeight: '600',
+        fontWeight: 'bold',
     },
     followingButtonText: {
         color: '#fff',
     },
     messageButton: {
+        backgroundColor: 'rgba(255, 255, 255, 0.2)',
         width: 36,
         height: 36,
         borderRadius: 18,
-        backgroundColor: '#fff',
         justifyContent: 'center',
         alignItems: 'center',
+        marginLeft: 10,
     },
-    collapsedHeader: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: HEADER_MIN_HEIGHT,
-        alignItems: 'center',
-        justifyContent: 'flex-end',
-        paddingBottom: 10,
-        zIndex: 5,
-        backgroundColor: '#ff416c',
-    },
-    collapsedHeaderTitle: {
-        color: '#fff',
-        fontWeight: 'bold',
-        fontSize: 18,
-    },
-    statsSection: {
+    tabsContainer: {
         flexDirection: 'row',
-        justifyContent: 'space-around',
-        paddingVertical: 20,
-        backgroundColor: '#fff',
         borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
+        borderBottomColor: '#333',
     },
-    statItem: {
-        alignItems: 'center',
-    },
-    statValue: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#333',
-    },
-    statLabel: {
-        fontSize: 13,
-        color: '#888',
-        marginTop: 3,
-    },
-    tabNavigation: {
-        flexDirection: 'row',
-        justifyContent: 'space-around',
-        borderBottomWidth: 1,
-        borderBottomColor: '#f0f0f0',
-    },
-    tabButton: {
+    tab: {
         flex: 1,
         alignItems: 'center',
-        paddingVertical: 12,
-        borderBottomWidth: 2,
-        borderBottomColor: 'transparent',
+        paddingVertical: 15,
     },
-    activeTabButton: {
+    activeTab: {
+        borderBottomWidth: 2,
         borderBottomColor: '#ff416c',
     },
-    contentGrid: {
+    contentContainer: {
+        flex: 1,
+        paddingVertical: 10,
+    },
+    videosGrid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
         paddingHorizontal: 2,
-        paddingTop: 2,
     },
     videoItem: {
-        flex: 1 / 3,
-        aspectRatio: 0.8,
-        padding: 1,
+        width: (width / 3) - 4,
+        height: (width / 3) * 1.5,
+        margin: 2,
     },
     videoThumbnail: {
-        flex: 1,
-        borderRadius: 5,
-        overflow: 'hidden',
-        backgroundColor: '#f0f0f0',
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#222',
+        position: 'relative',
     },
     thumbnailImage: {
         width: '100%',
         height: '100%',
     },
     thumbnailPlaceholder: {
-        flex: 1,
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#333',
         justifyContent: 'center',
         alignItems: 'center',
+    },
+    playIconOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0, 0, 0, 0.3)',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    videoCaption: {
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        color: '#fff',
+        padding: 5,
+        fontSize: 12,
     },
     videoStats: {
         position: 'absolute',
-        bottom: 5,
-        left: 5,
+        top: 5,
+        right: 5,
         flexDirection: 'row',
     },
-    videoStatItem: {
+    videoStat: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginRight: 8,
+        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+        borderRadius: 10,
+        paddingHorizontal: 5,
+        paddingVertical: 2,
+        marginLeft: 5,
     },
     videoStatText: {
         color: '#fff',
-        fontSize: 11,
+        fontSize: 10,
         marginLeft: 2,
-        textShadowColor: 'rgba(0,0,0,0.8)',
-        textShadowOffset: { width: 1, height: 1 },
-        textShadowRadius: 2,
-    },
-    videoCaption: {
-        fontSize: 12,
-        color: '#444',
-        marginTop: 4,
-        marginBottom: 8,
-        paddingHorizontal: 2,
     },
     emptyStateContainer: {
-        padding: 40,
+        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
+        padding: 20,
+        height: 300,
     },
     emptyStateText: {
-        fontSize: 16,
-        color: '#888',
+        color: '#aaa',
         marginTop: 10,
         marginBottom: 20,
     },
-    uploadButton: {
-        paddingHorizontal: 20,
-        paddingVertical: 10,
+    createVideoButton: {
         backgroundColor: '#ff416c',
-        borderRadius: 20,
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        borderRadius: 5,
     },
-    uploadButtonText: {
+    createVideoButtonText: {
         color: '#fff',
-        fontWeight: '600',
+        fontWeight: 'bold',
     },
 });

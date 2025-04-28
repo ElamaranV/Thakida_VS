@@ -1,14 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Image, Alert, Pressable } from 'react-native';
-import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import React, { useState } from 'react';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Pressable } from 'react-native';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useNavigation } from '@react-navigation/native';
-import { auth, firestore  } from '../services/firebase';
-import { getDoc, doc} from 'firebase/firestore';
-
+import { auth } from '../services/firebase';
 import useGoogleAuth from '../hooks/useGoogleAuth';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import Toast from 'react-native-toast-message';
 
 export default function LoginScreen() {
   const navigation = useNavigation();
@@ -16,47 +15,41 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const promptAsync = useGoogleAuth();
 
-
   const handleLogin = async () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      Toast.show({
+        type: 'success',
+        text1: 'Login Successful',
+      });
     } catch (error) {
-      Alert.alert('Login Failed', error.message);
+      Toast.show({
+        type: 'error',
+        text1: 'Login Failed',
+        text2: error.message,
+      });
     }
   };
 
   const handleGoogleLogin = async () => {
     try {
       await promptAsync();
+      Toast.show({
+        type: 'success',
+        text1: 'Google Login Successful',
+      });
     } catch (error) {
       console.log('Google Sign-In Error:', error.message);
+      Toast.show({
+        type: 'error',
+        text1: 'Google Login Failed',
+        text2: error.message,
+      });
     }
   };
 
-
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        const userDocRef = doc(firestore, 'users', user.uid); 
-        const userDocSnap = await getDoc(userDocRef); 
-    
-        if (!userDocSnap.exists()) {
-          navigation.replace('CompleteProfile');
-        } else {
-          navigation.replace('MainApp'); 
-        }
-      }
-    });
-  
-    return unsubscribe;
-  }, []);
-
   return (
-    <LinearGradient
-      colors={['#0f0c29', '#302b63', '#24243e']}
-      style={styles.background}
-    >
+    <LinearGradient colors={['#0f0c29', '#302b63', '#24243e']} style={styles.background}>
       <BlurView intensity={80} tint="dark" style={styles.glass}>
         <Text style={styles.title}>Thakida</Text>
 
@@ -92,11 +85,7 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  background: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  background: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   glass: {
     padding: 25,
     width: '85%',
@@ -106,12 +95,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.1)',
     borderWidth: 1,
   },
-  title: {
-    fontSize: 32,
-    color: 'white',
-    fontWeight: 'bold',
-    marginBottom: 30,
-  },
+  title: { fontSize: 32, color: 'white', fontWeight: 'bold', marginBottom: 30 },
   input: {
     width: '100%',
     padding: 12,
@@ -128,11 +112,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     width: '100%',
   },
-  loginText: {
-    textAlign: 'center',
-    color: 'white',
-    fontWeight: 'bold',
-  },
+  loginText: { textAlign: 'center', color: 'white', fontWeight: 'bold' },
   googleBtn: {
     flexDirection: 'row',
     gap: 8,
@@ -144,12 +124,6 @@ const styles = StyleSheet.create({
     width: '100%',
     justifyContent: 'center',
   },
-  googleText: {
-    color: 'white',
-    fontWeight: '600',
-  },
-  link: {
-    color: '#ccc',
-    marginTop: 15,
-  },
+  googleText: { color: 'white', fontWeight: '600' },
+  link: { color: '#ccc', marginTop: 15 },
 });

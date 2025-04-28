@@ -1,5 +1,6 @@
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
+import * as AuthSession from 'expo-auth-session';
 import { useEffect } from 'react';
 import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
 import { auth } from '../services/firebase';
@@ -7,11 +8,17 @@ import { auth } from '../services/firebase';
 WebBrowser.maybeCompleteAuthSession();
 
 export default function useGoogleAuth() {
+  // Generate redirect URI automatically
+  const redirectUri = AuthSession.makeRedirectUri({
+    useProxy: true,  // VERY IMPORTANT in Expo Go
+  });
+
   const [request, response, promptAsync] = Google.useAuthRequest({
-    expoClientId: '219480594633-qpip27n57d36a4aul5ra5d7bp49f3gsn.apps.googleusercontent.com',
-    webClientId: '219480594633-qpip27n57d36a4aul5ra5d7bp49f3gsn.apps.googleusercontent.com',
+    clientId: '219480594633-qpip27n57d36a4aul5ra5d7bp49f3gsn.apps.googleusercontent.com',
+    redirectUri: redirectUri,
     scopes: ['profile', 'email'],
     responseType: 'id_token',
+    useProxy: true, 
   });
 
   useEffect(() => {

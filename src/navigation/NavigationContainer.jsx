@@ -27,7 +27,7 @@ export default function Navigation() {
           const userData = userDocSnap.data();
           if (userData.username && userData.phoneNumber) {
             setProfileComplete(true); // Profile is complete
-          } else {
+          } else { 
             setProfileComplete(false); // Profile is incomplete
           }
         } else {
