@@ -8,6 +8,7 @@ import {
   ScrollView,
   SafeAreaView,
   Dimensions,
+  Platform,
 } from "react-native";
 import { Video } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
@@ -86,7 +87,7 @@ export default function AddVideoScreen({ navigation }) {
   const pickVideo = async () => {
     try {
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-
+  
       if (!permissionResult.granted) {
         Toast.show({
           type: "error",
@@ -95,7 +96,7 @@ export default function AddVideoScreen({ navigation }) {
         });
         return;
       }
-
+  
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Videos,
         allowsEditing: true,
@@ -103,21 +104,9 @@ export default function AddVideoScreen({ navigation }) {
         quality: 1,
         videoMaxDuration: 60,
       });
-
+  
       if (!result.canceled) {
-        const response = await fetch(result.assets[0].uri);
-        const blob = await response.blob();
-        const fileSizeInMB = blob.size / (1024 * 1024);
-
-        if (fileSizeInMB > 10) {
-          Toast.show({
-            type: "error",
-            text1: "File too large",
-            text2: "Video must be less than 10MB for upload",
-          });
-          return;
-        }
-
+        // Use the URI directly without converting to blob here
         setVideo(result.assets[0].uri);
         setVideoReady(true);
         setActiveFilter(filters[0]);
@@ -134,102 +123,107 @@ export default function AddVideoScreen({ navigation }) {
 
   const uploadToCloudinary = async () => {
     if (!video) {
-        Toast.show({ type: "error", text1: "No video selected", text2: "Please select a video first" });
-        return;
+      Toast.show({ type: "error", text1: "No video selected", text2: "Please select a video first" });
+      return;
     }
-
+  
     if (!caption.trim()) {
-        Toast.show({ type: "error", text1: "Caption required", text2: "Please add a caption for your video" });
-        return;
+      Toast.show({ type: "error", text1: "Caption required", text2: "Please add a caption for your video" });
+      return;
     }
-
+  
     if (!userData) {
-        Toast.show({
-            type: "error",
-            text1: "User Data Not Loaded",
-            text2: "Please wait while we load your profile data",
-        });
-        return;
+      Toast.show({
+        type: "error",
+        text1: "User Data Not Loaded",
+        text2: "Please wait while we load your profile data",
+      });
+      return;
     }
-
+  
     setUploading(true);
-
+  
     try {
-        const localUri = video;
-        let blob;
-        try {
-            const response = await fetch(localUri);
-            blob = await response.blob();
-        } catch (error) {
-            console.error("Error converting video URI to blob:", error);
-            Toast.show({
-                type: "error",
-                text1: "Error",
-                text2: "Failed to process the video file. Please try again.",
-            });
-            return;
-        }
-
-        const formData = new FormData();
+      // For mobile, we'll use a different approach to create FormData
+      const formData = new FormData();
+      
+      // For mobile, we need to append the file differently
+      if (Platform.OS === 'web') {
+        // Web approach
+        const response = await fetch(video);
+        const blob = await response.blob();
         formData.append("file", blob);
-        formData.append("upload_preset", "thakida_uploads");
-
-        if (activeFilter && activeFilter.value) {
-            formData.append("transformation", activeFilter.value);
-        }
-
-        console.log("Uploading video to Cloudinary...");
-        const cloudinaryResponse = await fetch(
-            "https://api.cloudinary.com/v1_1/dgsqldkve/video/upload",
-            {
-                method: "POST",
-                body: formData,
-                headers: {
-                    Accept: "application/json", // Remove Content-Type header
-                },
-            }
-        );
-
-        const responseData = await cloudinaryResponse.json();
-        console.log("Cloudinary response:", responseData);
-
-        if (cloudinaryResponse.ok) {
-            await addDoc(collection(firestore, "videos"), {
-                caption: caption,
-                comments: 0,
-                createdAt: serverTimestamp(),
-                likes: 0,
-                userProfilePic: userData.userProfilePic,
-                username: userData.username,
-                videoUrl: responseData.secure_url,
-            });
-
-            Toast.show({
-                type: "success",
-                text1: "Video uploaded!",
-                text2: "Your video has been shared successfully",
-            });
-
-            setVideo(null);
-            setCaption("");
-            setActiveFilter(null);
-            navigation.navigate("Home");
-        } else {
-            throw new Error(
-                responseData.error?.message || "Failed to upload to Cloudinary"
-            );
-        }
-    } catch (error) {
-        console.error("Error uploading video:", error);
-        Toast.show({
-            type: "error",
-            text1: "Upload failed",
-            text2: error.message || "Please try again later",
+      } else {
+        // Mobile approach
+        const filename = video.split('/').pop();
+        const match = /\.(\w+)$/.exec(filename);
+        const type = match ? `video/${match[1]}` : 'video';
+  
+        formData.append("file", {
+          uri: video,
+          name: filename,
+          type,
         });
+      }
+  
+      formData.append("upload_preset", "thakida_uploads");
+  
+      if (activeFilter && activeFilter.value) {
+        formData.append("transformation", activeFilter.value);
+      }
+  
+      console.log("Uploading video to Cloudinary...");
+      const cloudinaryResponse = await fetch(
+        "https://api.cloudinary.com/v1_1/dgsqldkve/video/upload",
+        {
+          method: "POST",
+          body: formData,
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      );
+  
+      const responseData = await cloudinaryResponse.json();
+      console.log("Cloudinary response:", responseData);
+  
+      if (cloudinaryResponse.ok) {
+        await addDoc(collection(firestore, "videos"), {
+          caption: caption,
+          comments: 0,
+          createdAt: serverTimestamp(),
+          likes: 0,
+          userProfilePic: userData.userProfilePic,
+          username: userData.username,
+          videoUrl: responseData.secure_url,
+        });
+  
+        Toast.show({
+          type: "success",
+          text1: "Video uploaded!",
+          text2: "Your video has been shared successfully",
+        });
+  
+        setVideo(null);
+        setCaption("");
+        setActiveFilter(null);
+        navigation.navigate("Home");
+      } else {
+        throw new Error(
+          responseData.error?.message || "Failed to upload to Cloudinary"
+        );
+      }
+    } catch (error) {
+      console.error("Error uploading video:", error);
+      Toast.show({
+        type: "error",
+        text1: "Upload failed",
+        text2: error.message || "Please try again later",
+      });
     } finally {
-        setUploading(false);
+      setUploading(false);
     }
-};
+  };
   
 
   const handleCancel = () => {
