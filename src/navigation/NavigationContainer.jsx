@@ -9,6 +9,7 @@ import RegisterScreen from '../screens/RegisterScreen';
 import CompleteProfileScreen from '../screens/CompleteProfileScreen';
 import MainApp from './MainApp';
 import Toast from 'react-native-toast-message';
+import { LikedVideosProvider } from '../context/LikedVideosContext';
 
 const Stack = createNativeStackNavigator();
 
@@ -47,19 +48,22 @@ export default function Navigation() {
   if (checkingAuth) return null; // Show a loading screen or spinner while checking auth
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {!user ? (
-          <>
-            <Stack.Screen name="Login" component={LoginScreen} />
-            <Stack.Screen name="Register" component={RegisterScreen} />
-          </>
-        ) : !profileComplete ? (
-          <Stack.Screen name="CompleteProfile" component={CompleteProfileScreen} />
-        ) : (
-          <Stack.Screen name="MainApp" component={MainApp} />
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <LikedVideosProvider>
+      <NavigationContainer>
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {!user ? (
+            <>
+              <Stack.Screen name="Login" component={LoginScreen} />
+              <Stack.Screen name="Register" component={RegisterScreen} />
+            </>
+          ) : !profileComplete ? (
+            <Stack.Screen name="CompleteProfile" component={CompleteProfileScreen} />
+          ) : (
+            <Stack.Screen name="MainApp" component={MainApp} />
+          )}
+        </Stack.Navigator>
+      </NavigationContainer>
+      <Toast />
+    </LikedVideosProvider>
   );
 }

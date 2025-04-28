@@ -570,7 +570,11 @@ export default function ProfileScreen({ navigation, route }) {
                             <>
                                 {posts.length > 0 ? (
                                     <View style={styles.videosGrid}>
-                                        {posts.map((post, index) => renderVideoItem({ item: post, index }))}
+                                        {posts.map((post, index) => (
+                                            <View key={post.id || `video-${index}`}>
+                                                {renderVideoItem({ item: post, index })}
+                                            </View>
+                                        ))}
                                     </View>
                                 ) : (
                                     renderEmptyState()

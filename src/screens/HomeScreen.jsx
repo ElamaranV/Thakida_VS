@@ -11,10 +11,11 @@ import {
   Platform,
   SafeAreaView,
   AppState,
-  Image
+  Image,
+  Share
 } from 'react-native';
-import { collection, getDocs, query, orderBy, limit, startAfter } from 'firebase/firestore';
-import { firestore } from '../services/firebase';
+import { collection, getDocs, query, orderBy, limit, startAfter, doc, updateDoc, arrayUnion, arrayRemove, getDoc } from 'firebase/firestore';
+import { firestore, auth } from '../services/firebase';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -22,6 +23,8 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import VideoPlayer from '../components/VideoPlayer';
 import { isVideoVisible, getVideoErrorMessage } from '../utils/videoHelpers';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { useLikedVideos } from '../context/LikedVideosContext';
+import Toast from 'react-native-toast-message';
 
 const HomeScreen = ({ navigation }) => {
   const [videos, setVideos] = useState([]);
@@ -41,6 +44,7 @@ const HomeScreen = ({ navigation }) => {
   const flatListRef = useRef(null);
   const videoRefs = useRef({});
   const lastDocRef = useRef(null);
+  const { likedVideos, toggleLike } = useLikedVideos();
 
   // Handle dimension changes for responsive layout
   useEffect(() => {
@@ -135,20 +139,29 @@ const HomeScreen = ({ navigation }) => {
         setLoadingMore(false);
         setLoading(false);
         
-        // If first fetch has no videos, show a message
         if (!fetchMore && videos.length === 0) {
           setError('No videos found');
         }
         return;
       }
       
-      // Save the last document for pagination
       lastDocRef.current = querySnapshot.docs[querySnapshot.docs.length - 1];
       
-      const videosList = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const videosList = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          likes: Array.isArray(data.likes) ? data.likes : [],
+          comments: Array.isArray(data.comments) ? data.comments : [],
+          createdAt: data.createdAt || new Date(),
+          username: data.username || 'Unknown',
+          caption: data.caption || '',
+          videoUrl: data.videoUrl || '',
+          userProfilePic: data.userProfilePic || null,
+          userId: data.userId || null
+        };
+      });
       
       if (fetchMore) {
         setVideos(prevVideos => [...prevVideos, ...videosList]);
@@ -238,10 +251,37 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
+  const handleLike = async (videoId) => {
+    if (!auth.currentUser) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Please login to like videos',
+      });
+      return;
+    }
+
+    try {
+      const result = await toggleLike(videoId);
+      if (!result.success) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: result.error || 'Failed to update like status',
+        });
+      }
+    } catch (error) {
+      console.error('Error toggling like:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to update like status',
+      });
+    }
+  };
+
   const handleDoubleTap = (videoId) => {
-    // Add like functionality here
-    console.log('Double tapped video', videoId);
-    // You could increment likes here
+    handleLike(videoId);
   };
 
   const handleVideoError = (error, videoId) => {
@@ -256,8 +296,64 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
+  const handleShare = async (video) => {
+    try {
+      const shareOptions = {
+        message: `Check out this video by @${video.username} on Thakida: ${video.videoUrl}`,
+        title: 'Share Video',
+      };
+      await Share.share(shareOptions);
+    } catch (error) {
+      console.error('Error sharing video:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to share video',
+      });
+    }
+  };
+
+  const handleNavigateToComments = async (videoId) => {
+    try {
+      // Fetch the video data first
+      const videoDoc = await getDoc(doc(firestore, 'videos', videoId));
+      if (videoDoc.exists()) {
+        const videoData = videoDoc.data();
+        const video = {
+          id: videoDoc.id,
+          ...videoData,
+          likes: Array.isArray(videoData.likes) ? videoData.likes : [],
+          comments: Array.isArray(videoData.comments) ? videoData.comments : [],
+          createdAt: videoData.createdAt || new Date(),
+          username: videoData.username || 'Unknown',
+          caption: videoData.caption || '',
+          videoUrl: videoData.videoUrl || '',
+          userProfilePic: videoData.userProfilePic || null,
+          userId: videoData.userId || null
+        };
+        navigation.navigate('VideoDetail', { video });
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Video not found',
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching video:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load video',
+      });
+    }
+  };
+
   const renderVideo = ({ item, index }) => {
     const isCurrentVideo = index === currentIndex;
+    const isLiked = likedVideos.has(item.id);
+    const likeCount = Array.isArray(item.likes) ? item.likes.length : 0;
+    const commentCount = Array.isArray(item.comments) ? item.comments.length : 0;
     
     return (
       <View style={[styles.videoContainer, { 
@@ -311,23 +407,29 @@ const HomeScreen = ({ navigation }) => {
           <TouchableOpacity 
             style={styles.interactionButton}
             activeOpacity={0.7}
+            onPress={() => handleLike(item.id)}
           >
-            <Ionicons name="heart-outline" size={30} color="white" />
-            <Text style={styles.interactionText}>{item.likes || 0}</Text>
+            <Ionicons 
+              name={isLiked ? "heart" : "heart-outline"} 
+              size={30} 
+              color={isLiked ? "#FF2D55" : "white"} 
+            />
+            <Text style={styles.interactionText}>{likeCount}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
             style={styles.interactionButton}
             activeOpacity={0.7}
-            onPress={() => navigation.navigate('VideoDetail', { videoId: item.id })}
+            onPress={() => handleNavigateToComments(item.id)}
           >
             <Ionicons name="chatbubble-outline" size={28} color="white" />
-            <Text style={styles.interactionText}>{item.comments || 0}</Text>
+            <Text style={styles.interactionText}>{commentCount}</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
             style={styles.interactionButton}
             activeOpacity={0.7}
+            onPress={() => handleShare(item)}
           >
             <Ionicons name="share-social-outline" size={28} color="white" />
             <Text style={styles.interactionText}>Share</Text>

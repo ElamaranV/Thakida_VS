@@ -9,11 +9,14 @@ import {
   Image,
   ActivityIndicator,
   SafeAreaView,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { firestore } from '../services/firebase';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { firestore, auth } from '../services/firebase';
+import { collection, query, where, getDocs, orderBy, doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { Video } from 'expo-av';
+import { useLikedVideos } from '../context/LikedVideosContext';
+import Toast from 'react-native-toast-message';
 
 const SearchScreen = ({ navigation }) => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -21,6 +24,7 @@ const SearchScreen = ({ navigation }) => {
   const [searchResults, setSearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [debouncedQuery, setDebouncedQuery] = useState('');
+  const { likedVideos, toggleLike } = useLikedVideos();
 
   // Debounce search query
   useEffect(() => {
@@ -88,6 +92,34 @@ const SearchScreen = ({ navigation }) => {
     performSearch();
   }, [debouncedQuery, activeTab]);
 
+  const handleLike = async (videoId) => {
+    const result = await toggleLike(videoId);
+    if (!result.success) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: result.error || 'Failed to update like status',
+      });
+    }
+  };
+
+  const handleShare = async (video) => {
+    try {
+      const shareOptions = {
+        message: `Check out this video by @${video.username} on Thakida: ${video.videoUrl}`,
+        title: 'Share Video',
+      };
+      await Share.share(shareOptions);
+    } catch (error) {
+      console.error('Error sharing video:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to share video',
+      });
+    }
+  };
+
   const renderVideoItem = ({ item }) => (
     <TouchableOpacity
       style={styles.videoItem}
@@ -105,6 +137,34 @@ const SearchScreen = ({ navigation }) => {
         <Text style={styles.caption} numberOfLines={2}>
           {item.caption}
         </Text>
+        <View style={styles.actionButtons}>
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => handleLike(item.id)}
+          >
+            <Ionicons
+              name={likedVideos.has(item.id) ? "heart" : "heart-outline"}
+              size={24}
+              color={likedVideos.has(item.id) ? "#FF2D55" : "#666"}
+            />
+            <Text style={styles.actionText}>{item.likes?.length || 0}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => navigation.navigate('Comments', { videoId: item.id })}
+          >
+            <Ionicons name="chatbubble-outline" size={24} color="#666" />
+            <Text style={styles.actionText}>{item.comments || 0}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => handleShare(item)}
+          >
+            <Ionicons name="share-outline" size={24} color="#666" />
+          </TouchableOpacity>
+        </View>
       </View>
     </TouchableOpacity>
   );
@@ -289,6 +349,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#333',
     marginTop: 5,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    paddingHorizontal: 10,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 5,
+  },
+  actionText: {
+    marginLeft: 5,
+    fontSize: 14,
+    color: '#666',
   },
 });
 

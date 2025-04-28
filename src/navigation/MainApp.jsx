@@ -7,6 +7,7 @@ import AddVideoScreen from '../screens/AddVideoScreen';
 import SearchScreen from '../screens/SearchScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import VideoDetail from '../screens/VideoDetail';
+import SettingsScreen from '../screens/SettingsScreen';
 import { Ionicons, Feather } from '@expo/vector-icons';
 import { auth } from '../services/firebase';
 import { signOut } from 'firebase/auth';
@@ -75,6 +76,7 @@ export default function MainApp() {
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="MainTabs" component={TabNavigator} />
         <Stack.Screen name="VideoDetail" component={VideoDetail} />
+        <Stack.Screen name="Settings" component={SettingsScreen} />
       </Stack.Navigator>
       <Toast />
     </>
