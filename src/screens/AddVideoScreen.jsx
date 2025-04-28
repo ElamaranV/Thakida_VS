@@ -144,34 +144,33 @@ export default function AddVideoScreen({ navigation }) {
     setUploading(true);
   
     try {
-      // For mobile, we'll use a different approach to create FormData
-      const formData = new FormData();
+      const localUri = video;
+      let formData = new FormData();
       
-      // For mobile, we need to append the file differently
+      // Handle file differently for mobile vs web
       if (Platform.OS === 'web') {
-        // Web approach
-        const response = await fetch(video);
+        const response = await fetch(localUri);
         const blob = await response.blob();
         formData.append("file", blob);
       } else {
-        // Mobile approach
-        const filename = video.split('/').pop();
+        // For mobile, we need to append the file differently
+        const filename = localUri.split('/').pop();
         const match = /\.(\w+)$/.exec(filename);
         const type = match ? `video/${match[1]}` : 'video';
-  
+        
         formData.append("file", {
-          uri: video,
+          uri: localUri,
           name: filename,
-          type,
+          type: type
         });
       }
-  
+
       formData.append("upload_preset", "thakida_uploads");
-  
+
       if (activeFilter && activeFilter.value) {
         formData.append("transformation", activeFilter.value);
       }
-  
+
       console.log("Uploading video to Cloudinary...");
       const cloudinaryResponse = await fetch(
         "https://api.cloudinary.com/v1_1/dgsqldkve/video/upload",
@@ -179,40 +178,44 @@ export default function AddVideoScreen({ navigation }) {
           method: "POST",
           body: formData,
           headers: {
+            'Accept': 'application/json',
             'Content-Type': 'multipart/form-data',
           },
         }
       );
-  
+
+      if (!cloudinaryResponse.ok) {
+        const errorData = await cloudinaryResponse.json();
+        throw new Error(errorData.error?.message || 'Failed to upload video to Cloudinary');
+      }
+
       const responseData = await cloudinaryResponse.json();
       console.log("Cloudinary response:", responseData);
-  
-      if (cloudinaryResponse.ok) {
-        await addDoc(collection(firestore, "videos"), {
-          caption: caption,
-          comments: 0,
-          createdAt: serverTimestamp(),
-          likes: 0,
-          userProfilePic: userData.userProfilePic,
-          username: userData.username,
-          videoUrl: responseData.secure_url,
-        });
-  
-        Toast.show({
-          type: "success",
-          text1: "Video uploaded!",
-          text2: "Your video has been shared successfully",
-        });
-  
-        setVideo(null);
-        setCaption("");
-        setActiveFilter(null);
-        navigation.navigate("Home");
-      } else {
-        throw new Error(
-          responseData.error?.message || "Failed to upload to Cloudinary"
-        );
+
+      if (!responseData.secure_url) {
+        throw new Error('No secure URL returned from Cloudinary');
       }
+
+      await addDoc(collection(firestore, "videos"), {
+        caption: caption,
+        comments: 0,
+        createdAt: serverTimestamp(),
+        likes: 0,
+        userProfilePic: userData.userProfilePic,
+        username: userData.username,
+        videoUrl: responseData.secure_url,
+      });
+  
+      Toast.show({
+        type: "success",
+        text1: "Video uploaded!",
+        text2: "Your video has been shared successfully",
+      });
+  
+      setVideo(null);
+      setCaption("");
+      setActiveFilter(null);
+      navigation.navigate("Home");
     } catch (error) {
       console.error("Error uploading video:", error);
       Toast.show({
