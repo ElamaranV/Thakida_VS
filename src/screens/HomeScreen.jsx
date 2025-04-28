@@ -14,7 +14,7 @@ import {
   Image,
   Share
 } from 'react-native';
-import { collection, getDocs, query, orderBy, limit, startAfter, doc, updateDoc, arrayUnion, arrayRemove, getDoc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit, startAfter, doc, updateDoc, arrayUnion, arrayRemove, getDoc, where } from 'firebase/firestore';
 import { firestore, auth } from '../services/firebase';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -40,11 +40,32 @@ const HomeScreen = ({ navigation }) => {
   );
   const [appState, setAppState] = useState(AppState.currentState);
   const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState('For You');
+  const [followingUsers, setFollowingUsers] = useState([]);
   
   const flatListRef = useRef(null);
   const videoRefs = useRef({});
   const lastDocRef = useRef(null);
   const { likedVideos, toggleLike } = useLikedVideos();
+
+  // Fetch following users when activeTab changes to Following
+  useEffect(() => {
+    const fetchFollowingUsers = async () => {
+      if (activeTab === 'Following' && auth.currentUser) {
+        try {
+          const userDoc = await getDoc(doc(firestore, 'users', auth.currentUser.uid));
+          if (userDoc.exists()) {
+            const userData = userDoc.data();
+            setFollowingUsers(userData.following || []);
+          }
+        } catch (error) {
+          console.error('Error fetching following users:', error);
+        }
+      }
+    };
+
+    fetchFollowingUsers();
+  }, [activeTab]);
 
   // Handle dimension changes for responsive layout
   useEffect(() => {
@@ -117,19 +138,40 @@ const HomeScreen = ({ navigation }) => {
       const videosCollection = collection(firestore, 'videos');
       let videosQuery;
       
-      if (fetchMore && lastDocRef.current) {
-        videosQuery = query(
-          videosCollection,
-          orderBy('createdAt', 'desc'),
-          startAfter(lastDocRef.current),
-          limit(10)
-        );
+      if (activeTab === 'Following' && followingUsers.length > 0) {
+        // Query for videos from followed users
+        if (fetchMore && lastDocRef.current) {
+          videosQuery = query(
+            videosCollection,
+            where('userId', 'in', followingUsers),
+            orderBy('createdAt', 'desc'),
+            startAfter(lastDocRef.current),
+            limit(10)
+          );
+        } else {
+          videosQuery = query(
+            videosCollection,
+            where('userId', 'in', followingUsers),
+            orderBy('createdAt', 'desc'),
+            limit(10)
+          );
+        }
       } else {
-        videosQuery = query(
-          videosCollection,
-          orderBy('createdAt', 'desc'),
-          limit(10)
-        );
+        // Query for all videos (For You tab)
+        if (fetchMore && lastDocRef.current) {
+          videosQuery = query(
+            videosCollection,
+            orderBy('createdAt', 'desc'),
+            startAfter(lastDocRef.current),
+            limit(10)
+          );
+        } else {
+          videosQuery = query(
+            videosCollection,
+            orderBy('createdAt', 'desc'),
+            limit(10)
+          );
+        }
       }
       
       const querySnapshot = await getDocs(videosQuery);
@@ -140,7 +182,7 @@ const HomeScreen = ({ navigation }) => {
         setLoading(false);
         
         if (!fetchMore && videos.length === 0) {
-          setError('No videos found');
+          setError(activeTab === 'Following' ? 'No videos from followed users' : 'No videos found');
         }
         return;
       }
@@ -349,6 +391,31 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
+  const handleProfilePress = (video) => {
+    console.log('Profile pressed:', video);
+    console.log('Current user:', auth.currentUser?.uid);
+    console.log('Video user:', video.userId);
+
+    if (!video || !video.userId) {
+      console.log('No user ID found');
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'User information not available',
+      });
+      return;
+    }
+
+    // Check if we're trying to view our own profile
+    if (video.userId === auth.currentUser?.uid) {
+      console.log('Navigating to own profile');
+      navigation.navigate('Profile');
+    } else {
+      console.log('Navigating to other user profile:', video.userId);
+      navigation.navigate('Profile', { userId: video.userId });
+    }
+  };
+
   const renderVideo = ({ item, index }) => {
     const isCurrentVideo = index === currentIndex;
     const isLiked = likedVideos.has(item.id);
@@ -395,8 +462,35 @@ const HomeScreen = ({ navigation }) => {
           style={styles.overlay}
         >
           <View style={styles.userInfo}>
+            <TouchableOpacity 
+              style={styles.profileImageContainer}
+              onPress={() => {
+                console.log('Profile image pressed');
+                handleProfilePress(item);
+              }}
+              activeOpacity={0.7}
+            >
+              {item.userProfilePic ? (
+                <Image 
+                  source={{ uri: item.userProfilePic }} 
+                  style={styles.profileImage} 
+                />
+              ) : (
+                <View style={[styles.profileImage, styles.noProfileImage]}>
+                  <Text style={styles.profileInitial}>{item.username ? item.username[0].toUpperCase() : '?'}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
             <View style={styles.userDetails}>
-              <Text style={styles.username}>@{item.username}</Text>
+              <TouchableOpacity 
+                onPress={() => {
+                  console.log('Username pressed');
+                  handleProfilePress(item);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.username}>@{item.username}</Text>
+              </TouchableOpacity>
               <Text style={styles.caption} numberOfLines={3}>{item.caption}</Text>
             </View>
           </View>
@@ -446,25 +540,6 @@ const HomeScreen = ({ navigation }) => {
               color="white" 
             />
             <Text style={styles.interactionText}>{isMuted ? 'Unmute' : 'Mute'}</Text>
-          </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={styles.profileButton}
-            activeOpacity={0.7}
-            onPress={() => navigation.navigate('Profile', { userId: item.userId })}
-          >
-            <View style={styles.profileImageContainer}>
-              {item.userProfilePic ? (
-                <Image 
-                  source={{ uri: item.userProfilePic }} 
-                  style={styles.profileImage} 
-                />
-              ) : (
-                <View style={[styles.profileImage, styles.noProfileImage]}>
-                  <Text style={styles.profileInitial}>{item.username ? item.username[0].toUpperCase() : '?'}</Text>
-                </View>
-              )}
-            </View>
           </TouchableOpacity>
         </View>
       </View>
@@ -538,7 +613,11 @@ const HomeScreen = ({ navigation }) => {
           }
           ListEmptyComponent={() => (
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>No videos found</Text>
+              <Text style={styles.emptyText}>
+                {activeTab === 'Following' 
+                  ? 'No videos from followed users' 
+                  : 'No videos found'}
+              </Text>
             </View>
           )}
         />
@@ -547,11 +626,31 @@ const HomeScreen = ({ navigation }) => {
         <View style={[styles.topNav, {
           paddingTop: Platform.OS === 'ios' ? 0 : 30
         }]}>
-          <TouchableOpacity style={styles.navItem}>
-            <Text style={[styles.navText, styles.activeNavText]}>For You</Text>
+          <TouchableOpacity 
+            style={styles.navItem}
+            onPress={() => {
+              setActiveTab('For You');
+              lastDocRef.current = null;
+              fetchVideos();
+            }}
+          >
+            <Text style={[
+              styles.navText, 
+              activeTab === 'For You' && styles.activeNavText
+            ]}>For You</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.navItem}>
-            <Text style={styles.navText}>Following</Text>
+          <TouchableOpacity 
+            style={styles.navItem}
+            onPress={() => {
+              setActiveTab('Following');
+              lastDocRef.current = null;
+              fetchVideos();
+            }}
+          >
+            <Text style={[
+              styles.navText, 
+              activeTab === 'Following' && styles.activeNavText
+            ]}>Following</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>

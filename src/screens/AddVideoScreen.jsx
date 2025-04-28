@@ -10,11 +10,12 @@ import {
   Dimensions,
   Platform,
 } from "react-native";
+import Slider from '@react-native-community/slider';
 import { Video } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
 import Toast from "react-native-toast-message";
-import { auth, firestore } from "../services/firebase"; // Import Firestore and Auth
-import { addDoc, doc, getDoc, collection, serverTimestamp } from "firebase/firestore"; // Import Firestore methods
+import { auth, firestore } from "../services/firebase";
+import { addDoc, doc, getDoc, collection, serverTimestamp } from "firebase/firestore";
 import { TextInput } from "react-native-gesture-handler";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -26,7 +27,15 @@ export default function AddVideoScreen({ navigation }) {
   const [caption, setCaption] = useState("");
   const [activeFilter, setActiveFilter] = useState(null);
   const [videoReady, setVideoReady] = useState(false);
-  const [userData, setUserData] = useState(null); // State for user data
+  const [userData, setUserData] = useState(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [brightness, setBrightness] = useState(0);
+  const [contrast, setContrast] = useState(100);
+  const [saturation, setSaturation] = useState(100);
+  const [volume, setVolume] = useState(1);
+  const [trimStart, setTrimStart] = useState(0);
+  const [trimEnd, setTrimEnd] = useState(1);
+  const [videoDuration, setVideoDuration] = useState(0);
   const videoRef = useRef(null);
 
   const filters = [
@@ -35,10 +44,18 @@ export default function AddVideoScreen({ navigation }) {
     { id: 3, name: "B&W", value: "e_blackwhite" },
     { id: 4, name: "Vibrant", value: "e_vibrance:50" },
     { id: 5, name: "Warm", value: "e_auto_color" },
+    { id: 6, name: "Cool", value: "e_blue:30" },
+    { id: 7, name: "Dramatic", value: "e_contrast:30,e_shadow:50" },
   ];
 
-  // Fetch user data from Firestore
-  
+  const playbackRates = [
+    { label: "0.5x", value: 0.5 },
+    { label: "0.75x", value: 0.75 },
+    { label: "1x", value: 1 },
+    { label: "1.5x", value: 1.5 },
+    { label: "2x", value: 2 },
+  ];
+
   useEffect(() => {
     const fetchUserData = async () => {
       try {
@@ -52,24 +69,19 @@ export default function AddVideoScreen({ navigation }) {
           navigation.replace("Login");
           return;
         }
-  
+
         const userDocRef = doc(firestore, "users", currentUser.uid);
         const userDocSnap = await getDoc(userDocRef);
-  
+
         if (!userDocSnap.exists()) {
-          // No user document found - just return early
-          // The NavigationContainer will handle showing the CompleteProfile screen
           return;
         }
-  
+
         const userData = userDocSnap.data();
         if (!userData.username || !userData.phoneNumber || !userData.userProfilePic) {
-          // Profile is incomplete - just return early
-          // The NavigationContainer will handle showing the CompleteProfile screen
           return;
         }
-  
-        // Only set userData if profile is complete
+
         setUserData(userData);
       } catch (error) {
         console.error("Error fetching user data:", error);
@@ -80,7 +92,7 @@ export default function AddVideoScreen({ navigation }) {
         });
       }
     };
-  
+
     fetchUserData();
   }, [navigation]);
 
@@ -106,10 +118,13 @@ export default function AddVideoScreen({ navigation }) {
       });
   
       if (!result.canceled) {
-        // Use the URI directly without converting to blob here
         setVideo(result.assets[0].uri);
         setVideoReady(true);
         setActiveFilter(filters[0]);
+        
+        // Initialize video duration to 0, will be updated when video loads
+        setVideoDuration(0);
+        setTrimEnd(1);
       }
     } catch (error) {
       console.error("Error picking video:", error);
@@ -119,6 +134,58 @@ export default function AddVideoScreen({ navigation }) {
         text2: "Please try again",
       });
     }
+  };
+
+  const handleVideoLoad = (status) => {
+    if (status.isLoaded) {
+      setVideoDuration(status.durationMillis / 1000); // Convert to seconds
+      setTrimEnd(status.durationMillis / 1000);
+    }
+  };
+
+  const applyPreviewEffects = async () => {
+    if (videoRef.current) {
+      await videoRef.current.setRateAsync(playbackRate, true);
+      await videoRef.current.setVolumeAsync(volume);
+    }
+  };
+
+  useEffect(() => {
+    applyPreviewEffects();
+  }, [playbackRate, volume]);
+
+  const buildCloudinaryTransformations = () => {
+    let transformations = [];
+    
+    // Apply filter if selected
+    if (activeFilter && activeFilter.value) {
+      transformations.push(activeFilter.value);
+    }
+    
+    // Apply color adjustments
+    if (brightness !== 0) {
+      transformations.push(`e_brightness:${brightness}`);
+    }
+    if (contrast !== 100) {
+      transformations.push(`e_contrast:${contrast}`);
+    }
+    if (saturation !== 100) {
+      transformations.push(`e_saturation:${saturation}`);
+    }
+    
+    // Apply playback speed
+    if (playbackRate !== 1) {
+      transformations.push(`e_accelerate:${playbackRate * 100 - 100}`);
+    }
+    
+    // Apply trimming if set
+    if (trimStart > 0 || trimEnd < videoDuration) {
+      const startSec = Math.floor(trimStart);
+      const endSec = Math.floor(trimEnd);
+      transformations.push(`so_${startSec},eo_${endSec}`);
+    }
+    
+    return transformations.join(",");
   };
 
   const uploadToCloudinary = async () => {
@@ -147,13 +214,11 @@ export default function AddVideoScreen({ navigation }) {
       const localUri = video;
       let formData = new FormData();
       
-      // Handle file differently for mobile vs web
       if (Platform.OS === 'web') {
         const response = await fetch(localUri);
         const blob = await response.blob();
         formData.append("file", blob);
       } else {
-        // For mobile, we need to append the file differently
         const filename = localUri.split('/').pop();
         const match = /\.(\w+)$/.exec(filename);
         const type = match ? `video/${match[1]}` : 'video';
@@ -166,11 +231,8 @@ export default function AddVideoScreen({ navigation }) {
       }
 
       formData.append("upload_preset", "thakida_uploads");
-
-      if (activeFilter && activeFilter.value) {
-        formData.append("transformation", activeFilter.value);
-      }
-
+      
+      // First upload the video without transformations
       console.log("Uploading video to Cloudinary...");
       const cloudinaryResponse = await fetch(
         "https://api.cloudinary.com/v1_1/dgsqldkve/video/upload",
@@ -196,6 +258,38 @@ export default function AddVideoScreen({ navigation }) {
         throw new Error('No secure URL returned from Cloudinary');
       }
 
+      // Apply transformations after upload
+      let transformedUrl = responseData.secure_url;
+      
+      // Apply filter if selected
+      if (activeFilter && activeFilter.value) {
+        transformedUrl = transformedUrl.replace('/upload/', `/upload/${activeFilter.value}/`);
+      }
+      
+      // Apply color adjustments
+      if (brightness !== 0) {
+        transformedUrl = transformedUrl.replace('/upload/', `/upload/e_brightness:${brightness}/`);
+      }
+      if (contrast !== 100) {
+        transformedUrl = transformedUrl.replace('/upload/', `/upload/e_contrast:${contrast}/`);
+      }
+      if (saturation !== 100) {
+        transformedUrl = transformedUrl.replace('/upload/', `/upload/e_saturation:${saturation}/`);
+      }
+      
+      // Apply playback speed
+      if (playbackRate !== 1) {
+        transformedUrl = transformedUrl.replace('/upload/', `/upload/e_accelerate:${playbackRate * 100 - 100}/`);
+      }
+      
+      // Apply trimming if set
+      if (trimStart > 0 || trimEnd < videoDuration) {
+        const startSec = Math.floor(trimStart);
+        const endSec = Math.floor(trimEnd);
+        transformedUrl = transformedUrl.replace('/upload/', `/upload/so_${startSec},eo_${endSec}/`);
+      }
+
+      // Save the transformed URL to Firestore
       await addDoc(collection(firestore, "videos"), {
         caption: caption,
         comments: 0,
@@ -203,7 +297,7 @@ export default function AddVideoScreen({ navigation }) {
         likes: 0,
         userProfilePic: userData.userProfilePic,
         username: userData.username,
-        videoUrl: responseData.secure_url,
+        videoUrl: transformedUrl,
       });
   
       Toast.show({
@@ -212,9 +306,7 @@ export default function AddVideoScreen({ navigation }) {
         text2: "Your video has been shared successfully",
       });
   
-      setVideo(null);
-      setCaption("");
-      setActiveFilter(null);
+      handleCancel();
       navigation.navigate("Home");
     } catch (error) {
       console.error("Error uploading video:", error);
@@ -227,13 +319,19 @@ export default function AddVideoScreen({ navigation }) {
       setUploading(false);
     }
   };
-  
 
   const handleCancel = () => {
     setVideo(null);
     setCaption("");
     setActiveFilter(null);
     setVideoReady(false);
+    setPlaybackRate(1);
+    setBrightness(0);
+    setContrast(100);
+    setSaturation(100);
+    setVolume(1);
+    setTrimStart(0);
+    setTrimEnd(videoDuration || 1);
   };
 
   return (
@@ -261,6 +359,8 @@ export default function AddVideoScreen({ navigation }) {
                   resizeMode="contain"
                   isLooping
                   shouldPlay
+                  onLoad={handleVideoLoad}
+                  onReadyForDisplay={() => applyPreviewEffects()}
                 />
               </View>
 
@@ -295,6 +395,115 @@ export default function AddVideoScreen({ navigation }) {
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+
+              <Text style={styles.sectionTitle}>Playback Speed</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.filtersContainer}
+              >
+                {playbackRates.map((rate) => (
+                  <TouchableOpacity
+                    key={rate.value}
+                    style={[
+                      styles.filterOption,
+                      playbackRate === rate.value && styles.activeFilter,
+                    ]}
+                    onPress={() => setPlaybackRate(rate.value)}
+                  >
+                    <Text style={styles.filterText}>{rate.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+
+              <Text style={styles.sectionTitle}>Video Adjustments</Text>
+              
+              <View style={styles.adjustmentContainer}>
+                <Text style={styles.adjustmentLabel}>Brightness: {brightness}</Text>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={-100}
+                  maximumValue={100}
+                  step={5}
+                  value={brightness}
+                  onValueChange={setBrightness}
+                  minimumTrackTintColor="#FF2D55"
+                  maximumTrackTintColor="#ddd"
+                />
+              </View>
+              
+              <View style={styles.adjustmentContainer}>
+                <Text style={styles.adjustmentLabel}>Contrast: {contrast}%</Text>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={200}
+                  step={5}
+                  value={contrast}
+                  onValueChange={setContrast}
+                  minimumTrackTintColor="#FF2D55"
+                  maximumTrackTintColor="#ddd"
+                />
+              </View>
+              
+              <View style={styles.adjustmentContainer}>
+                <Text style={styles.adjustmentLabel}>Saturation: {saturation}%</Text>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={200}
+                  step={5}
+                  value={saturation}
+                  onValueChange={setSaturation}
+                  minimumTrackTintColor="#FF2D55"
+                  maximumTrackTintColor="#ddd"
+                />
+              </View>
+              
+              <View style={styles.adjustmentContainer}>
+                <Text style={styles.adjustmentLabel}>Volume: {Math.round(volume * 100)}%</Text>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={0}
+                  maximumValue={1}
+                  step={0.05}
+                  value={volume}
+                  onValueChange={setVolume}
+                  minimumTrackTintColor="#FF2D55"
+                  maximumTrackTintColor="#ddd"
+                />
+              </View>
+
+              {videoDuration > 0 && (
+                <>
+                  <Text style={styles.sectionTitle}>Trim Video</Text>
+                  <View style={styles.adjustmentContainer}>
+                    <Text style={styles.adjustmentLabel}>
+                      Start: {Math.floor(trimStart)}s - End: {Math.floor(trimEnd)}s
+                    </Text>
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={0}
+                      maximumValue={videoDuration}
+                      step={1}
+                      value={trimStart}
+                      onValueChange={setTrimStart}
+                      minimumTrackTintColor="#FF2D55"
+                      maximumTrackTintColor="#ddd"
+                    />
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={0}
+                      maximumValue={videoDuration}
+                      step={1}
+                      value={trimEnd}
+                      onValueChange={setTrimEnd}
+                      minimumTrackTintColor="#FF2D55"
+                      maximumTrackTintColor="#ddd"
+                    />
+                  </View>
+                </>
+              )}
 
               <View style={styles.buttonContainer}>
                 {uploading ? (
@@ -364,7 +573,7 @@ const styles = StyleSheet.create({
   },
   videoPreviewContainer: {
     width: width,
-    height: width * 1.5, // 9:16 aspect ratio
+    height: width * 1.5,
     backgroundColor: "#000",
     justifyContent: "center",
     alignItems: "center",
@@ -392,10 +601,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     padding: 15,
+    paddingBottom: 5,
   },
   filtersContainer: {
     paddingHorizontal: 10,
-    marginBottom: 20,
+    marginBottom: 15,
+    paddingVertical: 5,
   },
   filterOption: {
     paddingVertical: 8,
@@ -412,10 +623,25 @@ const styles = StyleSheet.create({
     color: "#333",
     fontWeight: "500",
   },
+  adjustmentContainer: {
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+  },
+  adjustmentLabel: {
+    fontSize: 14,
+    color: "#333",
+    marginBottom: 5,
+  },
+  slider: {
+    width: "100%",
+    height: 40,
+    marginVertical: 10,
+  },
   buttonContainer: {
     flexDirection: "row",
     justifyContent: "space-evenly",
     padding: 15,
+    marginTop: 10,
   },
   cancelButton: {
     paddingVertical: 12,

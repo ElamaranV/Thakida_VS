@@ -14,7 +14,8 @@ import {
     Platform,
     StatusBar,
     Alert,
-    Pressable
+    Pressable,
+    Modal
 } from 'react-native';
 import {
     Ionicons,
@@ -44,7 +45,7 @@ import { extractThumbnailFromVideo } from '../utils/videoHelpers';
 import ErrorBoundary from '../components/ErrorBoundary';
 
 const { width, height } = Dimensions.get('window');
-const HEADER_MAX_HEIGHT = 320;
+const HEADER_MAX_HEIGHT = 380;
 const HEADER_MIN_HEIGHT = Platform.OS === 'ios' ? 90 : 70;
 const HEADER_SCROLL_DISTANCE = HEADER_MAX_HEIGHT - HEADER_MIN_HEIGHT;
 
@@ -58,10 +59,16 @@ export default function ProfileScreen({ navigation, route }) {
     const [refreshing, setRefreshing] = useState(false);
     const [activeTab, setActiveTab] = useState('videos');
     const [error, setError] = useState(null);
+    const [showFollowersList, setShowFollowersList] = useState(false);
+    const [showFollowingList, setShowFollowingList] = useState(false);
+    const [followers, setFollowers] = useState([]);
+    const [following, setFollowing] = useState([]);
+    const [loadingLists, setLoadingLists] = useState(false);
     
     const scrollY = useRef(new Animated.Value(0)).current;
     const userId = route.params?.userId || auth.currentUser?.uid;
     const insets = useSafeAreaInsets();
+    const videoRefs = useRef({});
 
     // Animated values for header
     const headerHeight = scrollY.interpolate({
@@ -87,6 +94,21 @@ export default function ProfileScreen({ navigation, route }) {
         outputRange: [0, 0.5, 1],
         extrapolate: 'clamp',
     });
+
+    const handleVideoRef = (ref, videoId) => {
+        if (ref) {
+            videoRefs.current[videoId] = ref;
+        }
+    };
+
+    const cleanupVideoRefs = () => {
+        Object.values(videoRefs.current).forEach(ref => {
+            if (ref && ref.unloadAsync) {
+                ref.unloadAsync().catch(console.error);
+            }
+        });
+        videoRefs.current = {};
+    };
 
     useEffect(() => {
         const loadUserData = async () => {
@@ -152,6 +174,12 @@ export default function ProfileScreen({ navigation, route }) {
         loadUserData();
     }, [userId]);
 
+    useEffect(() => {
+        return () => {
+            cleanupVideoRefs();
+        };
+    }, []);
+
     const fetchUserPosts = async (username) => {
         if (!username) {
             console.error('Username is required to fetch posts');
@@ -167,10 +195,20 @@ export default function ProfileScreen({ navigation, route }) {
             );
     
             const querySnapshot = await getDocs(postsQuery);
-            const postsData = querySnapshot.docs.map((doc) => ({
-                id: doc.id,
-                ...doc.data(),
-            }));
+            const postsData = querySnapshot.docs.map((doc) => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    ...data,
+                    likes: Array.isArray(data.likes) ? data.likes : [],
+                    comments: Array.isArray(data.comments) ? data.comments : [],
+                    views: data.views || 0,
+                    caption: data.caption || '',
+                    videoUrl: data.videoUrl || '',
+                    createdAt: data.createdAt || new Date(),
+                    username: data.username || username
+                };
+            });
     
             setPosts(postsData);
             
@@ -183,6 +221,7 @@ export default function ProfileScreen({ navigation, route }) {
             return postsData.length;
         } catch (error) {
             console.error('Error fetching user posts:', error);
+            setError('Failed to load posts');
             return 0;
         }
     };
@@ -286,6 +325,7 @@ export default function ProfileScreen({ navigation, route }) {
                                 isMuted={true}
                                 isActive={false}
                                 style={styles.thumbnailImage}
+                                onRef={(ref) => handleVideoRef(ref, item.id)}
                             />
                         ) : (
                             <View style={styles.thumbnailPlaceholder}>
@@ -332,6 +372,170 @@ export default function ProfileScreen({ navigation, route }) {
                 </TouchableOpacity>
             )}
         </View>
+    );
+
+    const fetchFollowingList = async () => {
+        setLoadingLists(true);
+        try {
+            // First get the user's following list
+            const userDoc = await getDoc(doc(firestore, 'users', userId));
+            if (!userDoc.exists()) {
+                throw new Error('User not found');
+            }
+
+            const userData = userDoc.data();
+            const followingIds = userData.following || [];
+
+            if (followingIds.length === 0) {
+                setFollowing([]);
+                setShowFollowingList(true);
+                return;
+            }
+
+            // Fetch details for each followed user
+            const followingPromises = followingIds.map(async (followedUserId) => {
+                const followedUserDoc = await getDoc(doc(firestore, 'users', followedUserId));
+                if (followedUserDoc.exists()) {
+                    const followedUserData = followedUserDoc.data();
+                    return {
+                        id: followedUserId,
+                        username: followedUserData.username,
+                        displayName: followedUserData.displayName || followedUserData.username,
+                        userProfilePic: followedUserData.userProfilePic
+                    };
+                }
+                return null;
+            });
+
+            const followingList = (await Promise.all(followingPromises)).filter(user => user !== null);
+            
+            setFollowing(followingList);
+            setShowFollowingList(true);
+        } catch (error) {
+            console.error('Error fetching following:', error);
+            Alert.alert('Error', 'Failed to load following list');
+        } finally {
+            setLoadingLists(false);
+        }
+    };
+
+    const fetchFollowersList = async () => {
+        setLoadingLists(true);
+        try {
+            // First get the user's followers list
+            const userDoc = await getDoc(doc(firestore, 'users', userId));
+            if (!userDoc.exists()) {
+                throw new Error('User not found');
+            }
+
+            const userData = userDoc.data();
+            const followerIds = userData.followers || [];
+
+            if (followerIds.length === 0) {
+                setFollowers([]);
+                setShowFollowersList(true);
+                return;
+            }
+
+            // Fetch details for each follower
+            const followerPromises = followerIds.map(async (followerId) => {
+                const followerDoc = await getDoc(doc(firestore, 'users', followerId));
+                if (followerDoc.exists()) {
+                    const followerData = followerDoc.data();
+                    return {
+                        id: followerId,
+                        username: followerData.username,
+                        displayName: followerData.displayName || followerData.username,
+                        userProfilePic: followerData.userProfilePic
+                    };
+                }
+                return null;
+            });
+
+            const followersList = (await Promise.all(followerPromises)).filter(user => user !== null);
+            
+            setFollowers(followersList);
+            setShowFollowersList(true);
+        } catch (error) {
+            console.error('Error fetching followers:', error);
+            Alert.alert('Error', 'Failed to load followers list');
+        } finally {
+            setLoadingLists(false);
+        }
+    };
+
+    const renderUserListItem = ({ item }) => (
+        <TouchableOpacity 
+            style={styles.userListItem}
+            onPress={() => {
+                setShowFollowersList(false);
+                setShowFollowingList(false);
+                navigation.navigate('Profile', { userId: item.id });
+            }}
+        >
+            <Image 
+                source={{ uri: item.userProfilePic || 'https://via.placeholder.com/50' }} 
+                style={styles.userListImage}
+            />
+            <View style={styles.userListInfo}>
+                <Text style={styles.userListName}>{item.displayName || item.username}</Text>
+                <Text style={styles.userListUsername}>@{item.username}</Text>
+            </View>
+            {!isCurrentUser && item.id !== auth.currentUser?.uid && (
+                <TouchableOpacity 
+                    style={styles.followButton}
+                    onPress={() => handleFollow(item.id)}
+                >
+                    <Text style={styles.followButtonText}>
+                        {following.some(u => u.id === item.id) ? 'Following' : 'Follow'}
+                    </Text>
+                </TouchableOpacity>
+            )}
+        </TouchableOpacity>
+    );
+
+    const renderListModal = () => (
+        <Modal
+            visible={showFollowersList || showFollowingList}
+            animationType="slide"
+            transparent={true}
+            onRequestClose={() => {
+                setShowFollowersList(false);
+                setShowFollowingList(false);
+            }}
+        >
+            <View style={styles.modalContainer}>
+                <View style={styles.modalContent}>
+                    <View style={styles.modalHeader}>
+                        <Text style={styles.modalTitle}>
+                            {showFollowersList ? 'Followers' : 'Following'}
+                        </Text>
+                        <TouchableOpacity 
+                            style={styles.closeButton}
+                            onPress={() => {
+                                setShowFollowersList(false);
+                                setShowFollowingList(false);
+                            }}
+                        >
+                            <Ionicons name="close" size={24} color="#000" />
+                        </TouchableOpacity>
+                    </View>
+                    
+                    {loadingLists ? (
+                        <View style={styles.loadingContainer}>
+                            <ActivityIndicator size="large" color="#ff416c" />
+                        </View>
+                    ) : (
+                        <FlatList
+                            data={showFollowersList ? followers : following}
+                            renderItem={renderUserListItem}
+                            keyExtractor={item => item.id}
+                            contentContainerStyle={styles.listContent}
+                        />
+                    )}
+                </View>
+            </View>
+        </Modal>
     );
 
     if (loading && !refreshing) {
@@ -441,15 +645,21 @@ export default function ProfileScreen({ navigation, route }) {
                                     <Text style={styles.statLabel}>Posts</Text>
                                 </View>
                                 
-                                <View style={styles.statItem}>
+                                <TouchableOpacity 
+                                    style={styles.statItem}
+                                    onPress={fetchFollowersList}
+                                >
                                     <Text style={styles.statValue}>{stats.followers}</Text>
                                     <Text style={styles.statLabel}>Followers</Text>
-                                </View>
+                                </TouchableOpacity>
                                 
-                                <View style={styles.statItem}>
+                                <TouchableOpacity 
+                                    style={styles.statItem}
+                                    onPress={fetchFollowingList}
+                                >
                                     <Text style={styles.statValue}>{stats.following}</Text>
                                     <Text style={styles.statLabel}>Following</Text>
-                                </View>
+                                </TouchableOpacity>
                             </View>
                             
                             {/* Profile Action Buttons */}
@@ -601,6 +811,9 @@ export default function ProfileScreen({ navigation, route }) {
                         )}
                     </View>
                 </Animated.ScrollView>
+                
+                {/* List Modals */}
+                {renderListModal()}
             </SafeAreaView>
         </ErrorBoundary>
     );
@@ -718,21 +931,25 @@ const styles = StyleSheet.create({
     },
     statsContainer: {
         flexDirection: 'row',
-        marginVertical: 10,
-        width: '80%',
         justifyContent: 'space-around',
+        width: '100%',
+        paddingVertical: 20,
+        marginTop: 10,
     },
     statItem: {
         alignItems: 'center',
+        padding: 10,
+        minWidth: 80,
     },
     statValue: {
-        color: '#fff',
-        fontSize: 18,
+        fontSize: 20,
         fontWeight: 'bold',
+        color: '#fff',
     },
     statLabel: {
+        fontSize: 14,
         color: '#fff',
-        fontSize: 12,
+        marginTop: 5,
     },
     profileActionButtons: {
         flexDirection: 'row',
@@ -875,6 +1092,69 @@ const styles = StyleSheet.create({
         borderRadius: 5,
     },
     createVideoButtonText: {
+        color: '#fff',
+        fontWeight: 'bold',
+    },
+    modalContainer: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'flex-end',
+    },
+    modalContent: {
+        backgroundColor: '#fff',
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
+        height: '80%',
+    },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: 15,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+    },
+    modalTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+    closeButton: {
+        padding: 5,
+    },
+    listContent: {
+        padding: 15,
+    },
+    userListItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: 10,
+        borderBottomWidth: 1,
+        borderBottomColor: '#eee',
+    },
+    userListImage: {
+        width: 50,
+        height: 50,
+        borderRadius: 25,
+        marginRight: 15,
+    },
+    userListInfo: {
+        flex: 1,
+    },
+    userListName: {
+        fontSize: 16,
+        fontWeight: 'bold',
+    },
+    userListUsername: {
+        fontSize: 14,
+        color: '#666',
+    },
+    followButton: {
+        backgroundColor: '#ff416c',
+        paddingHorizontal: 15,
+        paddingVertical: 8,
+        borderRadius: 20,
+    },
+    followButtonText: {
         color: '#fff',
         fontWeight: 'bold',
     },
