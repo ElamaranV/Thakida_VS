@@ -111,10 +111,19 @@ export default function ProfileScreen({ navigation, route }) {
     };
 
     useEffect(() => {
+        const resetState = () => {
+            setUser(null);
+            setIsFollowing(false);
+            setPosts([]);
+            setStats({ posts: 0, followers: 0, following: 0 });
+            setError(null);
+        };
+    
+        resetState(); // Reset state when userId changes
+    
         const loadUserData = async () => {
             try {
                 setLoading(true);
-                setError(null);
                 const currentUserId = auth.currentUser?.uid;
                 setIsCurrentUser(currentUserId === userId);
     
@@ -127,37 +136,24 @@ export default function ProfileScreen({ navigation, route }) {
                     fetchUserPosts(userData.username);
     
                     if (currentUserId && currentUserId !== userId) {
-                        try {
-                            const followDoc = await getDoc(
-                                doc(firestore, 'followers', userId, 'userFollowers', currentUserId)
-                            );
-                            setIsFollowing(followDoc.exists());
-                        } catch (followError) {
-                            console.error('Error checking follow status:', followError);
-                        }
+                        const followDoc = await getDoc(
+                            doc(firestore, 'followers', userId, 'userFollowers', currentUserId)
+                        );
+                        setIsFollowing(followDoc.exists());
                     }
     
-                    try {
-                        const followerSnapshot = await getDocs(
-                            collection(firestore, 'followers', userId, 'userFollowers')
-                        );
-                        const followingSnapshot = await getDocs(
-                            collection(firestore, 'following', userId, 'userFollowing')
-                        );
-        
-                        setStats({
-                            posts: 0, // Will be updated after fetching posts
-                            followers: followerSnapshot.size,
-                            following: followingSnapshot.size,
-                        });
-                    } catch (statsError) {
-                        console.error('Error fetching stats:', statsError);
-                        setStats({
-                            posts: 0,
-                            followers: 0,
-                            following: 0,
-                        });
-                    }
+                    const followerSnapshot = await getDocs(
+                        collection(firestore, 'followers', userId, 'userFollowers')
+                    );
+                    const followingSnapshot = await getDocs(
+                        collection(firestore, 'following', userId, 'userFollowing')
+                    );
+    
+                    setStats({
+                        posts: 0, // Will be updated after fetching posts
+                        followers: followerSnapshot.size,
+                        following: followingSnapshot.size,
+                    });
                 } else {
                     setError('User not found');
                     Alert.alert('Error', 'User not found');
@@ -172,7 +168,7 @@ export default function ProfileScreen({ navigation, route }) {
         };
     
         loadUserData();
-    }, [userId]);
+    }, [userId]); 
 
     useEffect(() => {
         return () => {

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
@@ -8,15 +8,32 @@ import SearchScreen from '../screens/SearchScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import VideoDetail from '../screens/VideoDetail';
 import SettingsScreen from '../screens/SettingsScreen';
-import { Ionicons, Feather } from '@expo/vector-icons';
-import { auth } from '../services/firebase';
+import EditProfileScreen from '../screens/EditProfileScreen';
+import { Ionicons, Feather, MaterialCommunityIcons } from '@expo/vector-icons';
+import { auth, firestore } from '../services/firebase';
 import { signOut } from 'firebase/auth';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import Toast from 'react-native-toast-message';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 const CustomHeader = ({ navigation }) => {
+  const [points, setPoints] = useState(0);
+
+  useEffect(() => {
+    if (auth.currentUser) {
+      const userRef = doc(firestore, 'users', auth.currentUser.uid);
+      const unsubscribe = onSnapshot(userRef, (doc) => {
+        if (doc.exists()) {
+          setPoints(doc.data().coins || 0);
+        }
+      });
+
+      return () => unsubscribe();
+    }
+  }, []);
+
   const handleLogout = async () => {
     try {
       await signOut(auth);
@@ -37,9 +54,15 @@ const CustomHeader = ({ navigation }) => {
   return (
     <View style={styles.header}>
       <Text style={styles.headerTitle}>Thakida</Text>
-      <TouchableOpacity onPress={handleLogout}>
-        <Feather name="log-out" size={24} color="#ff416c" />
-      </TouchableOpacity>
+      <View style={styles.headerRight}>
+        <View style={styles.pointsContainer}>
+          <MaterialCommunityIcons name="piggy-bank" size={20} color="#FFD700" />
+          <Text style={styles.pointsText}>{points}</Text>
+        </View>
+        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+          <Feather name="log-out" size={24} color="#ff416c" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
@@ -77,6 +100,7 @@ export default function MainApp() {
         <Stack.Screen name="MainTabs" component={TabNavigator} />
         <Stack.Screen name="VideoDetail" component={VideoDetail} />
         <Stack.Screen name="Settings" component={SettingsScreen} />
+        <Stack.Screen name="EditProfile" component={EditProfileScreen} />
       </Stack.Navigator>
       <Toast />
     </>
@@ -98,5 +122,26 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 20,
     fontWeight: 'bold',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  pointsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 15,
+    marginRight: 15,
+  },
+  pointsText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    marginLeft: 5,
+  },
+  logoutButton: {
+    padding: 5,
   },
 });

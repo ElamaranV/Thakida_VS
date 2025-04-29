@@ -38,7 +38,9 @@ import {
   orderBy,
   limit,
   deleteDoc,
-  setDoc
+  setDoc,
+  arrayRemove,
+  arrayUnion
 } from 'firebase/firestore';
 import { firestore, auth } from '../services/firebase';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -78,31 +80,65 @@ export default function VideoDetail({ navigation, route }) {
         const videoDoc = await getDoc(doc(firestore, 'videos', videoId));
         if (videoDoc.exists()) {
           const videoData = videoDoc.data();
-          setVideo({
+          
+          // Ensure we have all required fields with proper defaults
+          const formattedVideoData = {
             id: videoDoc.id,
-            ...videoData
-          });
-          setLikesCount(videoData.likes || 0);
+            videoUrl: videoData.videoUrl,
+            username: videoData.username,
+            userId: videoData.userId,
+            caption: videoData.caption || '',
+            likes: Array.isArray(videoData.likes) ? videoData.likes : [],
+            comments: Array.isArray(videoData.comments) ? videoData.comments : [],
+            createdAt: videoData.createdAt || new Date(),
+            userProfilePic: videoData.userProfilePic || 'https://via.placeholder.com/100'
+          };
+          
+          setVideo(formattedVideoData);
+          setLikesCount(formattedVideoData.likes.length);
 
-          // Fetch user, likes, comments, etc... 
-          // We're only setting up a basic structure here.
-          // The full implementation would include checking like status, followers, etc.
+          // Fetch user data
+          if (formattedVideoData.userId) {
+            const userDoc = await getDoc(doc(firestore, 'users', formattedVideoData.userId));
+            if (userDoc.exists()) {
+              setUser(userDoc.data());
+            }
+          }
+
+          // Fetch related videos
+          if (formattedVideoData.userId) {
+            const relatedVideosQuery = query(
+              collection(firestore, 'videos'),
+              where('userId', '==', formattedVideoData.userId),
+              where('id', '!=', videoId),
+              orderBy('createdAt', 'desc'),
+              limit(6)
+            );
+            
+            const relatedVideosSnapshot = await getDocs(relatedVideosQuery);
+            const relatedVideosData = relatedVideosSnapshot.docs.map(doc => {
+              const data = doc.data();
+              return {
+                id: doc.id,
+                videoUrl: data.videoUrl,
+                username: data.username,
+                userId: data.userId,
+                caption: data.caption || '',
+                likes: Array.isArray(data.likes) ? data.likes : [],
+                comments: Array.isArray(data.comments) ? data.comments : [],
+                createdAt: data.createdAt || new Date(),
+                userProfilePic: data.userProfilePic || 'https://via.placeholder.com/100'
+              };
+            });
+            
+            setRelatedVideos(relatedVideosData);
+          }
         } else {
           setError('Video not found');
-          Toast.show({
-            type: 'error',
-            text1: 'Error',
-            text2: 'Video not found',
-          });
         }
       } catch (error) {
         console.error('Error fetching video data:', error);
         setError('Failed to load video');
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: 'Failed to load video. Please try again.',
-        });
       } finally {
         setLoading(false);
       }
@@ -152,8 +188,43 @@ export default function VideoDetail({ navigation, route }) {
   };
 
   const handleLike = async () => {
-    // Like/unlike functionality would go here
-    console.log('Like toggled');
+    if (!auth.currentUser) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Please login to like videos',
+      });
+      return;
+    }
+
+    try {
+      const videoRef = doc(firestore, 'videos', videoId);
+      const currentLikes = video.likes || [];
+      const isCurrentlyLiked = currentLikes.includes(auth.currentUser.uid);
+
+      if (isCurrentlyLiked) {
+        // Unlike
+        await updateDoc(videoRef, {
+          likes: arrayRemove(auth.currentUser.uid)
+        });
+        setLikesCount(prev => prev - 1);
+        setIsLiked(false);
+      } else {
+        // Like
+        await updateDoc(videoRef, {
+          likes: arrayUnion(auth.currentUser.uid)
+        });
+        setLikesCount(prev => prev + 1);
+        setIsLiked(true);
+      }
+    } catch (error) {
+      console.error('Error toggling like:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to update like status',
+      });
+    }
   };
 
   const handleFollow = async () => {
@@ -347,7 +418,7 @@ export default function VideoDetail({ navigation, route }) {
                         <View style={styles.relatedVideoThumbnail}>
                           <VideoPlayer
                             uri={relatedVideo.videoUrl}
-                            style={{width: '100%', height: '100%'}}
+                            style={styles.relatedVideoPlayer}
                             shouldPlay={false}
                             isMuted={true}
                             isActive={false}
@@ -587,6 +658,10 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  relatedVideoPlayer: {
+    width: '100%',
+    height: '100%',
   },
   relatedVideoTitle: {
     color: '#fff',

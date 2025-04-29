@@ -9,15 +9,18 @@ import {
   SafeAreaView,
   Dimensions,
   Platform,
+  Modal,
+  Animated,
 } from "react-native";
 import Slider from '@react-native-community/slider';
 import { Video } from "expo-av";
 import * as ImagePicker from "expo-image-picker";
 import Toast from "react-native-toast-message";
 import { auth, firestore } from "../services/firebase";
-import { addDoc, doc, getDoc, collection, serverTimestamp } from "firebase/firestore";
+import { addDoc, doc, getDoc, collection, serverTimestamp, updateDoc, increment } from "firebase/firestore";
 import { TextInput } from "react-native-gesture-handler";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import LottieView from 'lottie-react-native';
 
 const { width } = Dimensions.get("window");
 
@@ -37,6 +40,8 @@ export default function AddVideoScreen({ navigation }) {
   const [trimEnd, setTrimEnd] = useState(1);
   const [videoDuration, setVideoDuration] = useState(0);
   const videoRef = useRef(null);
+  const [showReward, setShowReward] = useState(false);
+  const scaleAnim = useRef(new Animated.Value(0)).current;
 
   const filters = [
     { id: 1, name: "Normal", value: "" },
@@ -188,6 +193,27 @@ export default function AddVideoScreen({ navigation }) {
     return transformations.join(",");
   };
 
+  const showRewardAnimation = () => {
+    setShowReward(true);
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      tension: 50,
+      friction: 7,
+    }).start();
+
+    setTimeout(() => {
+      Animated.spring(scaleAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 50,
+        friction: 7,
+      }).start(() => {
+        setShowReward(false);
+      });
+    }, 3000);
+  };
+
   const uploadToCloudinary = async () => {
     if (!video) {
       Toast.show({ type: "error", text1: "No video selected", text2: "Please select a video first" });
@@ -299,6 +325,15 @@ export default function AddVideoScreen({ navigation }) {
         username: userData.username,
         videoUrl: transformedUrl,
       });
+
+      // Update user's coins
+      const userRef = doc(firestore, "users", auth.currentUser.uid);
+      await updateDoc(userRef, {
+        coins: increment(10) // Add 10 points for uploading a video
+      });
+
+      // Show reward animation
+      showRewardAnimation();
   
       Toast.show({
         type: "success",
@@ -531,6 +566,38 @@ export default function AddVideoScreen({ navigation }) {
         </ScrollView>
       )}
 
+      {/* Reward Modal */}
+      <Modal
+        visible={showReward}
+        transparent={true}
+        animationType="none"
+      >
+        <View style={styles.rewardContainer}>
+          <Animated.View style={[
+            styles.rewardContent,
+            {
+              transform: [{ scale: scaleAnim }]
+            }
+          ]}>
+            <LottieView
+              source={require('../assets/animations/confetti.json')}
+              autoPlay
+              loop={false}
+              style={styles.confetti}
+            />
+            <MaterialCommunityIcons name="party-popper" size={60} color="#FFD700" />
+            <Text style={styles.rewardTitle}>Hurray!</Text>
+            <Text style={styles.rewardText}>You earned +10 Thakida Points!</Text>
+            <LottieView
+              source={require('../assets/animations/dancing.json')}
+              autoPlay
+              loop={true}
+              style={styles.dancingAnimation}
+            />
+          </Animated.View>
+        </View>
+      </Modal>
+
       <Toast />
     </SafeAreaView>
   );
@@ -664,5 +731,42 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#fff",
+  },
+  rewardContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rewardContent: {
+    backgroundColor: '#fff',
+    padding: 30,
+    borderRadius: 20,
+    alignItems: 'center',
+    width: '80%',
+  },
+  confetti: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  rewardTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#FF2D55',
+    marginTop: 20,
+  },
+  rewardText: {
+    fontSize: 18,
+    color: '#333',
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  dancingAnimation: {
+    width: 150,
+    height: 150,
+    marginTop: 20,
   },
 });

@@ -120,10 +120,27 @@ const SearchScreen = ({ navigation }) => {
     }
   };
 
+  const handleVideoPress = (video) => {
+    // Ensure we have all required fields with proper defaults
+    const videoData = {
+      id: video.id,
+      videoUrl: video.videoUrl,
+      username: video.username,
+      userId: video.userId,
+      caption: video.caption || '',
+      likes: Array.isArray(video.likes) ? video.likes : [],
+      comments: Array.isArray(video.comments) ? video.comments : [],
+      createdAt: video.createdAt || new Date(),
+      userProfilePic: video.userProfilePic || 'https://via.placeholder.com/100'
+    };
+    
+    navigation.navigate('VideoDetail', { videoId: videoData.id });
+  };
+
   const renderVideoItem = ({ item }) => (
     <TouchableOpacity
       style={styles.videoItem}
-      onPress={() => navigation.navigate('VideoDetail', { video: item })}
+      onPress={() => handleVideoPress(item)}
     >
       <Video
         source={{ uri: item.videoUrl }}
