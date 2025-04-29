@@ -55,16 +55,17 @@ const CustomHeader = ({ navigation }) => {
   return (
     <SafeAreaView style={styles.headerContainer}>
       <StatusBar barStyle="light-content" backgroundColor="black" />
-      <Text style={styles.headerTitle}>Thakida</Text>
-      <View style={styles.headerRight}>
-      <View style={styles.pointsContainer}>
-          <MaterialCommunityIcons name="piggy-bank" size={20} color="#FFD700" />
-          <Text style={styles.pointsText}>{points}</Text>
+      <View style={styles.headerContent}>
+        <Text style={styles.headerTitle}>Thakida</Text>
+        <View style={styles.headerRight}>
+          <View style={styles.pointsContainer}>
+            <MaterialCommunityIcons name="piggy-bank" size={20} color="#FFD700" />
+            <Text style={styles.pointsText}>{points}</Text>
+          </View>
+          <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+            <Feather name="log-out" size={24} color="#ff416c" />
+          </TouchableOpacity>
         </View>
-      
-        <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-          <Feather name="log-out" size={24} color="#ff416c" />
-        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -126,39 +127,42 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     borderBottomWidth: 1,
     borderBottomColor: '#333',
+    paddingTop: 10, // Add top padding
   },
-  header: {
+  headerContent: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: '#000',
+    paddingHorizontal: 16, // Consistent horizontal padding
+    paddingVertical: 12, // Vertical padding for better spacing
   },
   headerTitle: {
     color: '#fff',
-    fontSize: 20,
+    fontSize: 22, // Slightly larger font
     fontWeight: 'bold',
+    paddingLeft: 4, // Small left padding for title
   },
   headerRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 16, // Space between piggy bank and logout
   },
   pointsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 15,
-    marginRight: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
   },
   pointsText: {
     color: '#fff',
     fontWeight: 'bold',
-    marginLeft: 5,
+    marginLeft: 6,
+    fontSize: 14,
   },
   logoutButton: {
-    padding: 5,
+    padding: 8,
+    marginRight: 4, // Small right margin
   },
 });
