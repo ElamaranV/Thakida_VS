@@ -107,11 +107,12 @@ const VideoPlayer = ({
   };
 
   const handleVideoError = (error) => {
-    console.error('Video error:', error);
-    setIsError(true);
-    setErrorMessage(error?.error?.message || 'Failed to load video');
+    console.warn('Video playback failed. Suppressing error.');
+
+    // Stop loading spinner
     setLoading(false);
-    
+
+    // Optionally, call the onError callback
     if (onError) {
       onError(error);
     }

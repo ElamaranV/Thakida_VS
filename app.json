@@ -2,6 +2,7 @@
   "expo": {
     "name": "thakida",
     "slug": "thakida",
+    "scheme": "thakida",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/favicon.ico",
@@ -18,11 +19,16 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#ffffff",
+        "softwareKeyboardLayoutMode": "pan",
+        "hardwareAccelerated": false
       }
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-video"
+    ]
   }
 }

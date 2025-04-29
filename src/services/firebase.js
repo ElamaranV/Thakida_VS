@@ -1,13 +1,10 @@
-// Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getAnalytics, isSupported } from "firebase/analytics";
-import { getAuth, GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
+import { initializeAuth, getReactNativePersistence } from "firebase/auth";
 import { getFirestore } from 'firebase/firestore';
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
+import { GoogleAuthProvider } from 'firebase/auth';
+import ReactNativeAsyncStorage from '@react-native-async-storage/async-storage';
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// Your Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCNRUAYSWWl5YlhQHf2Bsez8mWvwFwQpp4",
   authDomain: "thakida-b957f.firebaseapp.com",
@@ -21,15 +18,23 @@ const firebaseConfig = {
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-isSupported().then((supported) => {
-  if (supported) {
-    const analytics = getAnalytics(app);
-  } else {
-    console.warn('Firebase Analytics is not supported in this environment.');
-  }
+
+// Initialize Auth with persistence
+const auth = initializeAuth(app, {
+  persistence: getReactNativePersistence(ReactNativeAsyncStorage)
 });
+
+// Initialize other services
 const googleProvider = new GoogleAuthProvider();
 const firestore = getFirestore(app);
 
-export {app, auth, firestore, googleProvider};
+// // Modified Analytics initialization (React Native compatible)
+// let analytics;
+// if (typeof window !== 'undefined') {
+//   const { getAnalytics, isSupported } = require("firebase/analytics");
+//   isSupported().then((supported) => {
+//     if (supported) analytics = getAnalytics(app);
+//   });
+// }
+
+export { app, auth, firestore, googleProvider };

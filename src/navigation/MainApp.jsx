@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import HomeScreen from '../screens/HomeScreen';
 import AddVideoScreen from '../screens/AddVideoScreen';
 import SearchScreen from '../screens/SearchScreen';
@@ -52,25 +53,38 @@ const CustomHeader = ({ navigation }) => {
   };
 
   return (
-    <View style={styles.header}>
+    <SafeAreaView style={styles.headerContainer}>
+      <StatusBar barStyle="light-content" backgroundColor="black" />
       <Text style={styles.headerTitle}>Thakida</Text>
       <View style={styles.headerRight}>
-        <View style={styles.pointsContainer}>
+      <View style={styles.pointsContainer}>
           <MaterialCommunityIcons name="piggy-bank" size={20} color="#FFD700" />
           <Text style={styles.pointsText}>{points}</Text>
         </View>
+      
         <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
           <Feather name="log-out" size={24} color="#ff416c" />
         </TouchableOpacity>
       </View>
-    </View>
+    </SafeAreaView>
   );
 };
 
 const TabNavigator = () => (
   <Tab.Navigator
     screenOptions={({ route }) => ({
-      tabBarStyle: { backgroundColor: '#000' },
+      tabBarStyle: { 
+        backgroundColor: '#000',
+        height: 60,
+        paddingBottom: 10,
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        elevation: 0,
+        borderTopWidth: 1,
+        borderTopColor: '#333',
+      },
       tabBarActiveTintColor: '#ff416c',
       tabBarInactiveTintColor: '#aaa',
       header: () => <CustomHeader />,
@@ -108,6 +122,11 @@ export default function MainApp() {
 }
 
 const styles = StyleSheet.create({
+  headerContainer: {
+    backgroundColor: '#000',
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -115,8 +134,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 15,
     backgroundColor: '#000',
-    borderBottomWidth: 1,
-    borderBottomColor: '#333',
   },
   headerTitle: {
     color: '#fff',

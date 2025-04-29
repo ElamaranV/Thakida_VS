@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   Pressable,
   Platform,
-  SafeAreaView,
   AppState,
   Image,
   Share
@@ -25,6 +24,7 @@ import { isVideoVisible, getVideoErrorMessage } from '../utils/videoHelpers';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useLikedVideos } from '../context/LikedVideosContext';
 import Toast from 'react-native-toast-message';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 const HomeScreen = ({ navigation }) => {
   const [videos, setVideos] = useState([]);
@@ -42,7 +42,9 @@ const HomeScreen = ({ navigation }) => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('For You');
   const [followingUsers, setFollowingUsers] = useState([]);
-  
+  const [isError, setIsError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
   const flatListRef = useRef(null);
   const videoRefs = useRef({});
   const lastDocRef = useRef(null);
@@ -326,10 +328,11 @@ const HomeScreen = ({ navigation }) => {
     handleLike(videoId);
   };
 
-  const handleVideoError = (error, videoId) => {
-    console.error(`Error loading video ${videoId}:`, error);
-    // We don't set global error state here to avoid affecting the whole list
-    // Instead, each video component handles its own error state
+  const handleVideoError = (error) => {
+    console.warn('Video playback failed. Suppressing error.');
+    setIsError(true);
+    setErrorMessage('This video cannot be played on your device.');
+    setLoading(false);
   };
   
   const setVideoRef = (ref, videoId) => {
@@ -360,20 +363,9 @@ const HomeScreen = ({ navigation }) => {
       // Fetch the video data first
       const videoDoc = await getDoc(doc(firestore, 'videos', videoId));
       if (videoDoc.exists()) {
-        const videoData = videoDoc.data();
-        const video = {
-          id: videoDoc.id,
-          ...videoData,
-          likes: Array.isArray(videoData.likes) ? videoData.likes : [],
-          comments: Array.isArray(videoData.comments) ? videoData.comments : [],
-          createdAt: videoData.createdAt || new Date(),
-          username: videoData.username || 'Unknown',
-          caption: videoData.caption || '',
-          videoUrl: videoData.videoUrl || '',
-          userProfilePic: videoData.userProfilePic || null,
-          userId: videoData.userId || null
-        };
-        navigation.navigate('VideoDetail', { video });
+        navigation.navigate('VideoDetail', { 
+          videoId: videoId  // Pass only videoId instead of whole video object
+        });
       } else {
         Toast.show({
           type: 'error',
@@ -382,11 +374,11 @@ const HomeScreen = ({ navigation }) => {
         });
       }
     } catch (error) {
-      console.error('Error fetching video:', error);
+      console.error('Error navigating to comments:', error);
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Failed to load video',
+        text2: 'Failed to load comments',
       });
     }
   };
@@ -440,7 +432,7 @@ const HomeScreen = ({ navigation }) => {
             isActive={isVideoVisible(index, currentIndex, 0)}
             style={styles.video}
             onRef={(ref) => setVideoRef(ref, item.id)}
-            onError={(error) => handleVideoError(error, item.id)}
+            onError={(error) => handleVideoError(error)}
           />
         </Pressable>
         
@@ -574,7 +566,7 @@ const HomeScreen = ({ navigation }) => {
 
   return (
     <ErrorBoundary>
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView style={styles.container} edges={['bottom']}>
         <StatusBar style="light" />
         <FlatList
           ref={flatListRef}
@@ -663,7 +655,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  loadingContainer: {
+loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
@@ -694,8 +686,9 @@ const styles = StyleSheet.create({
   },
   videoContainer: {
     width: '100%',
-    height: '100%', // Ensure full screen height
+    height: '100%',
     position: 'relative',
+    paddingBottom: 90, // Increased padding to account for tab bar
   },
   videoWrapper: {
     flex: 1,
@@ -719,7 +712,7 @@ const styles = StyleSheet.create({
   },
   overlay: {
     position: 'absolute',
-    bottom: 0,
+    bottom: 120, // Increased from 90 to 120
     left: 0,
     right: 0,
     paddingHorizontal: 20,
@@ -727,39 +720,43 @@ const styles = StyleSheet.create({
   },
   userInfo: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 60,
+    alignItems: 'flex-start',
+    marginBottom: 15,
+    width: '75%', // Limit width to prevent overlap with interaction buttons
   },
   userDetails: {
     flex: 1,
+    marginLeft: 10,
+    flexShrink: 1, // Allow text to shrink if needed
   },
   username: {
     color: '#fff',
     fontWeight: 'bold',
     fontSize: 16,
-    marginBottom: 5,
+    marginBottom: 8,
+    flexShrink: 1, // Allow text to shrink if needed
   },
   caption: {
     color: '#fff',
     fontSize: 14,
+    flexWrap: 'wrap', // Allow text to wrap
   },
   interactionContainer: {
     position: 'absolute',
     right: 10,
-    bottom: 100,
+    bottom: 120, // Increased from 90 to 120
     alignItems: 'center',
+    width: '15%', // Set fixed width for interaction buttons
   },
   interactionButton: {
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 25, // Increased from 20 to 25 for more spacing
   },
   interactionText: {
     color: '#fff',
     marginTop: 5,
     fontSize: 12,
-  },
-  profileButton: {
-    marginTop: 10,
+    textAlign: 'center', // Added to ensure text alignment
   },
   profileImageContainer: {
     width: 48,
@@ -768,6 +765,8 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
     overflow: 'hidden',
+    marginTop: 5,
+    flexShrink: 0, // Prevent profile image from shrinking
   },
   profileImage: {
     width: '100%',
