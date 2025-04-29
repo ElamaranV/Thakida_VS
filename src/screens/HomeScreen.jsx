@@ -193,6 +193,8 @@ const HomeScreen = ({ navigation }) => {
       
       const videosList = querySnapshot.docs.map(doc => {
         const data = doc.data();
+        // Ensure userId is set if username exists
+        const userId = data.userId || (data.username ? doc.id : null);
         return {
           id: doc.id,
           ...data,
@@ -203,7 +205,7 @@ const HomeScreen = ({ navigation }) => {
           caption: data.caption || '',
           videoUrl: data.videoUrl || '',
           userProfilePic: data.userProfilePic || null,
-          userId: data.userId || null
+          userId: userId
         };
       });
       
@@ -383,28 +385,62 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  const handleProfilePress = (video) => {
+  const handleProfilePress = async (video) => {
     console.log('Profile pressed:', video);
     console.log('Current user:', auth.currentUser?.uid);
     console.log('Video user:', video.userId);
 
-    if (!video || !video.userId) {
-      console.log('No user ID found');
+    if (!video) {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'User information not available',
+        text2: 'Video information not available',
       });
       return;
     }
 
-    // Check if we're trying to view our own profile
-    if (video.userId === auth.currentUser?.uid) {
-      console.log('Navigating to own profile');
-      navigation.navigate('Profile');
-    } else {
-      console.log('Navigating to other user profile:', video.userId);
-      navigation.navigate('Profile', { userId: video.userId });
+    try {
+      // First, try to find the user by username since we know it exists
+      const usersQuery = query(
+        collection(firestore, 'users'),
+        where('username', '==', video.username),
+        limit(1)
+      );
+      const querySnapshot = await getDocs(usersQuery);
+      
+      if (querySnapshot.empty) {
+        console.log('No user found with username:', video.username);
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'User not found',
+        });
+        return;
+      }
+
+      const userDoc = querySnapshot.docs[0];
+      const userId = userDoc.id;
+      console.log('Found user with ID:', userId);
+
+      // Check if we're trying to view our own profile
+      if (userId === auth.currentUser?.uid) {
+        console.log('Navigating to own profile');
+        navigation.navigate('Profile');
+      } else {
+        console.log('Navigating to other user profile with ID:', userId);
+        navigation.navigate('Profile', { 
+          userId: userId,
+          username: video.username,
+          userProfilePic: video.userProfilePic
+        });
+      }
+    } catch (error) {
+      console.error('Error in handleProfilePress:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load profile',
+      });
     }
   };
 
@@ -457,10 +493,11 @@ const HomeScreen = ({ navigation }) => {
             <TouchableOpacity 
               style={styles.profileImageContainer}
               onPress={() => {
-                console.log('Profile image pressed');
+                console.log('Profile image pressed for:', item.username);
                 handleProfilePress(item);
               }}
               activeOpacity={0.7}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             >
               {item.userProfilePic ? (
                 <Image 
@@ -476,10 +513,11 @@ const HomeScreen = ({ navigation }) => {
             <View style={styles.userDetails}>
               <TouchableOpacity 
                 onPress={() => {
-                  console.log('Username pressed');
+                  console.log('Username pressed for:', item.username);
                   handleProfilePress(item);
                 }}
                 activeOpacity={0.7}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
                 <Text style={styles.username}>@{item.username}</Text>
               </TouchableOpacity>

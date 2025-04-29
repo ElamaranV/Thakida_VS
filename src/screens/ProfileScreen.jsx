@@ -347,7 +347,7 @@ export default function ProfileScreen({ navigation, route }) {
                         
                         <View style={styles.videoStat}>
                             <Ionicons name="heart-outline" size={14} color="#999" />
-                            <Text style={styles.videoStatText}>{item.likes || 0}</Text>
+                            <Text style={styles.videoStatText}>{Array.isArray(item.likes) ? item.likes.length : 0}</Text>
                         </View>
                     </View>
                 </TouchableOpacity>
